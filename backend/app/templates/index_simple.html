@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Simple • Battery Smart Sensor{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+  <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h2 class="text-base font-semibold text-slate-700">Dashboard (Simple)</h2>
+    <p class="mt-1 text-sm text-slate-500">Giao diện tối giản để kiểm tra nhanh.</p>
+  </section>
+
+  {% if readings and readings|length > 0 %}
+  {% set latest = readings[0] %}
+  <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h3 class="text-sm font-semibold text-slate-600">Latest</h3>
+    <div class="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+      <div><span class="text-slate-500">Device:</span> <span class="font-medium">{{ latest.device_id }}</span></div>
+      <div><span class="text-slate-500">Temp:</span> <span class="font-medium">{{ '%.1f'|format(latest.temperature) }} °C</span></div>
+      <div><span class="text-slate-500">Smoke:</span> <span class="font-medium">{{ latest.smoke_value }}</span></div>
+      <div><span class="text-slate-500">Fire:</span> <span class="font-medium">{{ 'DETECTED' if latest.fire_detected else 'Normal' }}</span></div>
+      <div><span class="text-slate-500">Alert:</span> <span class="font-medium">{{ 'ON' if latest.alert_active else 'OFF' }}</span></div>
+      <div><span class="text-slate-500">Time:</span> <span class="font-medium">{{ latest.created_at | datetime_to_local }}</span></div>
+      <div class="col-span-full"><span class="text-slate-500">Device Time:</span> <span class="font-medium">{{ latest.timestamp | timestamp_to_datetime }}</span></div>
+    </div>
+  </section>
+  {% else %}
+  <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div class="text-slate-600">Không có dữ liệu.</div>
+  </section>
+  {% endif %}
+
+  <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h3 class="text-sm font-semibold text-slate-600">All Readings</h3>
+    <div class="mt-2 space-y-1 text-sm">
+      {% for r in readings %}
+      <div class="py-1 border-b border-slate-100">
+        ID: {{ r.id }} | Time: {{ r.created_at | datetime_to_local }} | Temp: {{ '%.1f'|format(r.temperature) }} | Smoke: {{ r.smoke_value }}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Battery Smart Sensor{% endblock %}</title>
+    <meta name="color-scheme" content="light dark">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Minimal tweaks for better table scrolling on small screens */
+      .table-wrap { overflow-x: auto; }
+    </style>
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <header class="bg-white/90 backdrop-blur border-b border-slate-200">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+          <h1 class="text-base sm:text-lg font-semibold tracking-tight">Battery Smart Sensor</h1>
+        </div>
+        <nav class="text-xs sm:text-sm text-slate-500 flex items-center gap-3">
+          <a class="hover:text-slate-700" href="/">Dashboard</a>
+          <a class="hover:text-slate-700" href="/test">Simple</a>
+          <a class="hover:text-slate-700" href="/debug">Debug</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 py-6">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="max-w-6xl mx-auto px-4 py-8 text-center text-xs text-slate-400">
+      <span>Auto refresh mỗi 10 giây (chỉ khi tab đang mở)</span>
+    </footer>
+
+    <script>
+      // Tự động reload trang mỗi 10s khi tab đang hiện
+      setInterval(function(){ if(!document.hidden) location.reload(); }, 10000);
+    </script>
+  </body>
+  </html>
+
+

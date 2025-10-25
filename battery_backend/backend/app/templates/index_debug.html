@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Battery Monitor Dashboard - Simple</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 16px; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin: 10px 0; }
+    </style>
+  </head>
+  <body>
+    <h2>Battery Smart Sensor - Dashboard (Simple)</h2>
+    
+    <div class="card">
+      <h3>Debug Info</h3>
+      <div>Readings count: {{ readings|length }}</div>
+      {% if readings %}
+      <div>First reading ID: {{ readings[0].id }}</div>
+      <div>First reading timestamp: {{ readings[0].timestamp }}</div>
+      <div>First reading created_at: {{ readings[0].created_at | datetime_to_local }}</div>
+      {% endif %}
+    </div>
+    
+    {% if readings and readings|length > 0 %}
+    <div class="card">
+      <h3>Latest Reading</h3>
+      <div>Device: {{ readings[0].device_id }}</div>
+      <div>Temperature: {{ readings[0].temperature }} °C</div>
+      <div>Smoke: {{ readings[0].smoke_value }}</div>
+      <div>Fire: {{ 'DETECTED' if readings[0].fire_detected else 'Normal' }}</div>
+      <div>Alert: {{ 'ON' if readings[0].alert_active else 'OFF' }}</div>
+      <div>Time: {{ readings[0].created_at | datetime_to_local }}</div>
+      <div>Device Time: {{ readings[0].timestamp }}</div>
+    </div>
+    {% endif %}
+    
+    <div class="card">
+      <h3>All Readings</h3>
+      {% for r in readings %}
+      <div style="border-bottom: 1px solid #eee; padding: 5px 0;">
+        ID: {{ r.id }} | Time: {{ r.created_at | datetime_to_local }} | Temp: {{ r.temperature }} | Smoke: {{ r.smoke_value }}
+      </div>
+      {% endfor %}
+    </div>
+  </body>
+</html>

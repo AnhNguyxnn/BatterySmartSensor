@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  battery-backend:
+    build: .
+    container_name: battery-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - BATTERY_API_KEY=${BATTERY_API_KEY:-battery_monitor_2024_secure_key}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

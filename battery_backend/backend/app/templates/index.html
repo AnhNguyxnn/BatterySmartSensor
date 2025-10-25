@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Battery Monitor Dashboard</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 16px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+      .warn { color: #d32f2f; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 6px 8px; border-bottom: 1px solid #eee; text-align: left; }
+    </style>
+  </head>
+  <body>
+    <h2>Battery Smart Sensor - Dashboard</h2>
+    <div class="grid">
+      {% if readings %}
+      <div class="card">
+        <h3>Latest</h3>
+        <div>Device: {{ readings[0].device_id }}</div>
+        <div>Temperature: {{ readings[0].temperature }} °C</div>
+        <div>Smoke: {{ readings[0].smoke_value }} {% if not readings[0].smoke_connected %}<span class="warn">(not connected)</span>{% endif %}</div>
+        <div>Fire: {{ 'DETECTED' if readings[0].fire_detected else 'Normal' }}</div>
+        <div>Alert: {{ 'ON' if readings[0].alert_active else 'OFF' }}</div>
+        <div>Time: {{ readings[0].created_at | datetime_to_local }}</div>
+        <div>Device Time: {{ readings[0].timestamp | timestamp_to_datetime }}</div>
+      </div>
+      {% endif %}
+      <div class="card">
+        <h3>Recent Readings</h3>
+        <table>
+          <thead>
+            <tr><th>Time</th><th>Temp</th><th>Smoke</th><th>Fire</th><th>Alert</th><th>Device</th></tr>
+          </thead>
+          <tbody>
+            {% for r in readings %}
+            <tr>
+              <td>{{ r.created_at | datetime_to_local }}</td>
+              <td>{{ r.temperature }}</td>
+              <td>{{ r.smoke_value }}</td>
+              <td>{{ 'Y' if r.fire_detected else 'N' }}</td>
+              <td>{{ 'Y' if r.alert_active else 'N' }}</td>
+              <td>{{ r.device_id }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <script>
+      setInterval(()=>location.reload(), 10000);
+    </script>
+  </body>
+  </html>
+
+
