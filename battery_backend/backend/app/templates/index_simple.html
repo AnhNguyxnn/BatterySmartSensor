@@ -1,61 +1,45 @@
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Battery Monitor Dashboard</title>
-    <style>
-      body { font-family: Arial, sans-serif; padding: 16px; }
-      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-      .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
-      .warn { color: #d32f2f; }
-      table { width: 100%; border-collapse: collapse; }
-      th, td { padding: 6px 8px; border-bottom: 1px solid #eee; text-align: left; }
-    </style>
-  </head>
-  <body>
-    <h2>Battery Smart Sensor - Dashboard</h2>
-    <div class="grid">
-      {% if readings and readings|length > 0 %}
-      <div class="card">
-        <h3>Latest</h3>
-        <div>Device: {{ readings[0].device_id }}</div>
-        <div>Temperature: {{ readings[0].temperature }} °C</div>
-        <div>Smoke: {{ readings[0].smoke_value }} {% if not readings[0].smoke_connected %}<span class="warn">(not connected)</span>{% endif %}</div>
-        <div>Fire: {{ 'DETECTED' if readings[0].fire_detected else 'Normal' }}</div>
-        <div>Alert: {{ 'ON' if readings[0].alert_active else 'OFF' }}</div>
-        <div>Time: {{ readings[0].created_at | datetime_to_local }}</div>
-        <div>Device Time: {{ readings[0].timestamp | timestamp_to_datetime }}</div>
-      </div>
-      {% else %}
-      <div class="card">
-        <h3>No Data</h3>
-        <div>No readings available</div>
-      </div>
-      {% endif %}
-      <div class="card">
-        <h3>Recent Readings</h3>
-        <table>
-          <thead>
-            <tr><th>Time</th><th>Temp</th><th>Smoke</th><th>Fire</th><th>Alert</th><th>Device</th></tr>
-          </thead>
-          <tbody>
-            {% for r in readings %}
-            <tr>
-              <td>{{ r.created_at | datetime_to_local }}</td>
-              <td>{{ r.temperature }}</td>
-              <td>{{ r.smoke_value }}</td>
-              <td>{{ 'Y' if r.fire_detected else 'N' }}</td>
-              <td>{{ 'Y' if r.alert_active else 'N' }}</td>
-              <td>{{ r.device_id }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+{% extends "base.html" %}
+
+{% block title %}Simple • Battery Smart Sensor{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+  <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h2 class="text-base font-semibold text-slate-700">Dashboard (Simple)</h2>
+    <p class="mt-1 text-sm text-slate-500">Giao diện tối giản để kiểm tra nhanh.</p>
+  </section>
+
+  {% if readings and readings|length > 0 %}
+  {% set latest = readings[0] %}
+  <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h3 class="text-sm font-semibold text-slate-600">Latest</h3>
+    <div class="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+      <div><span class="text-slate-500">Device:</span> <span class="font-medium">{{ latest.device_id }}</span></div>
+      <div><span class="text-slate-500">Temp:</span> <span class="font-medium">{{ '%.1f'|format(latest.temperature) }} °C</span></div>
+      <div><span class="text-slate-500">MQ-135:</span> <span class="font-medium">{{ latest.smoke_value }}</span></div>
+      <div><span class="text-slate-500">Fire:</span> <span class="font-medium">{{ 'DETECTED' if latest.fire_detected else 'Normal' }}</span></div>
+      <div><span class="text-slate-500">Alert:</span> <span class="font-medium">{{ 'ON' if latest.alert_active else 'OFF' }}</span></div>
+      <div><span class="text-slate-500">Time:</span> <span class="font-medium">{{ latest.created_at | datetime_to_local }}</span></div>
+      <div class="col-span-full"><span class="text-slate-500">Device Time:</span> <span class="font-medium">{{ latest.timestamp | timestamp_to_datetime }}</span></div>
     </div>
-    <script>
-      setInterval(()=>location.reload(), 10000);
-    </script>
-  </body>
-</html>
+  </section>
+  {% else %}
+  <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div class="text-slate-600">Không có dữ liệu.</div>
+  </section>
+  {% endif %}
+
+  <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h3 class="text-sm font-semibold text-slate-600">All Readings</h3>
+    <div class="mt-2 space-y-1 text-sm">
+      {% for r in readings %}
+      <div class="py-1 border-b border-slate-100">
+        ID: {{ r.id }} | Time: {{ r.created_at | datetime_to_local }} | Temp: {{ '%.1f'|format(r.temperature) }} | MQ-135: {{ r.smoke_value }}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+

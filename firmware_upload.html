@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Battery Monitor - Firmware Upload</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #2196f3;
+            padding-bottom: 20px;
+        }
+        .form-group {
+            margin: 20px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        input[type="file"] {
+            padding: 8px;
+        }
+        button {
+            background: #2196f3;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            margin-top: 20px;
+        }
+        button:hover {
+            background: #1976d2;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .progress {
+            width: 100%;
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 20px 0;
+            display: none;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #4caf50;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .code {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            margin: 10px 0;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 Battery Monitor Firmware Upload</h1>
+            <p>Upload firmware từ máy local lên backend server</p>
+        </div>
+
+        <div class="info">
+            <h3>📋 Hướng dẫn sử dụng:</h3>
+            <ol>
+                <li>Build firmware trên máy local với PlatformIO</li>
+                <li>Chọn file firmware .bin đã build</li>
+                <li>Nhập thông tin version và server</li>
+                <li>Click "Upload Firmware"</li>
+                <li>ESP32 sẽ tự động phát hiện firmware mới</li>
+            </ol>
+        </div>
+
+        <form id="uploadForm">
+            <div class="form-group">
+                <label for="firmwareFile">📁 Firmware File (.bin):</label>
+                <input type="file" id="firmwareFile" accept=".bin" required>
+            </div>
+
+            <div class="form-group">
+                <label for="version">📱 Version:</label>
+                <input type="text" id="version" placeholder="1.0.1" required>
+            </div>
+
+            <div class="form-group">
+                <label for="build">🔢 Build Number:</label>
+                <input type="number" id="build" value="1" min="1">
+            </div>
+
+            <div class="form-group">
+                <label for="serverUrl">🌐 Server URL:</label>
+                <input type="url" id="serverUrl" placeholder="http://cloud.anhnguyxn.io.vn:8000" required>
+            </div>
+
+            <div class="form-group">
+                <label for="apiKey">🔑 API Key:</label>
+                <input type="password" id="apiKey" placeholder="battery_monitor_2024_secure_key">
+            </div>
+
+            <div class="form-group">
+                <label for="releaseNotes">📝 Release Notes:</label>
+                <textarea id="releaseNotes" rows="3" placeholder="Bug fixes and improvements"></textarea>
+            </div>
+
+            <button type="submit" id="uploadBtn">🚀 Upload Firmware</button>
+        </form>
+
+        <div class="progress" id="progress">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <div class="info">
+            <h3>🛠️ Alternative Methods:</h3>
+            
+            <h4>1. Command Line (Bash):</h4>
+            <div class="code">
+./upload_firmware_local.sh firmware.bin 1.0.1 http://cloud.anhnguyxn.io.vn:8000
+            </div>
+
+            <h4>2. Python Script:</h4>
+            <div class="code">
+python3 upload_firmware.py firmware.bin 1.0.1 http://cloud.anhnguyxn.io.vn:8000
+            </div>
+
+            <h4>3. curl Command:</h4>
+            <div class="code">
+curl -X POST http://cloud.anhnguyxn.io.vn:8000/api/firmware/upload \
+  -H "X-API-Key: battery_monitor_2024_secure_key" \
+  -F "file=@firmware.bin" \
+  -F "version=1.0.1" \
+  -F "build=1" \
+  -F "release_notes=Bug fixes"
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const firmwareFile = document.getElementById('firmwareFile').files[0];
+            const version = document.getElementById('version').value;
+            const build = document.getElementById('build').value;
+            const serverUrl = document.getElementById('serverUrl').value;
+            const apiKey = document.getElementById('apiKey').value || 'battery_monitor_2024_secure_key';
+            const releaseNotes = document.getElementById('releaseNotes').value || 'Bug fixes and improvements';
+            
+            if (!firmwareFile) {
+                showStatus('Vui lòng chọn file firmware', 'error');
+                return;
+            }
+            
+            if (!firmwareFile.name.endsWith('.bin')) {
+                showStatus('File phải có extension .bin', 'error');
+                return;
+            }
+            
+            // Disable form
+            document.getElementById('uploadBtn').disabled = true;
+            document.getElementById('uploadBtn').textContent = '🔄 Đang upload...';
+            showProgress();
+            
+            try {
+                formData.append('file', firmwareFile);
+                formData.append('version', version);
+                formData.append('build', build);
+                formData.append('release_notes', releaseNotes);
+                
+                const response = await fetch(`${serverUrl}/api/firmware/upload`, {
+                    method: 'POST',
+                    headers: {
+                        'X-API-Key': apiKey
+                    },
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.status === 'success') {
+                    showStatus('✅ Upload thành công! ESP32 sẽ tự động phát hiện firmware mới.', 'success');
+                    simulateProgress();
+                } else {
+                    showStatus(`❌ Upload thất bại: ${result.message || 'Unknown error'}`, 'error');
+                }
+                
+            } catch (error) {
+                showStatus(`❌ Lỗi upload: ${error.message}`, 'error');
+            } finally {
+                // Re-enable form
+                document.getElementById('uploadBtn').disabled = false;
+                document.getElementById('uploadBtn').textContent = '🚀 Upload Firmware';
+            }
+        });
+        
+        function showProgress() {
+            document.getElementById('progress').style.display = 'block';
+        }
+        
+        function simulateProgress() {
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += Math.random() * 15;
+                if (progress > 100) progress = 100;
+                
+                document.getElementById('progressBar').style.width = progress + '%';
+                
+                if (progress >= 100) {
+                    clearInterval(interval);
+                }
+            }, 200);
+        }
+        
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+        }
+        
+        // Auto-fill default values
+        document.getElementById('serverUrl').value = 'http://cloud.anhnguyxn.io.vn:8000';
+        document.getElementById('apiKey').value = 'battery_monitor_2024_secure_key';
+    </script>
+</body>
+</html>

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from fastapi import FastAPI, Depends, Request, HTTPException, Header, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
@@ -109,17 +110,17 @@ def send_telegram_message(text: str):
         print(f"⚠️ Telegram send error: {e}")
 
 def format_alert_message(payload: schemas.IngestRequest, server_timestamp: int) -> str:
-    # Simple alert message including temperature, smoke, and fire status
+    # Simple alert message including temperature, smoke, and fire status (ASCII only for compatibility)
     time_str = datetime.fromtimestamp(server_timestamp, tz=timezone(timedelta(hours=7))).strftime("%Y-%m-%d %H:%M:%S")
     lines = [
-        "🚨 <b>CẢNH BÁO</b> từ thiết bị",
+        "<b>CANH BAO</b> tu thiet bi",
         f"Device: <code>{payload.device_id}</code>",
-        f"Thời gian (UTC+7): {time_str}",
-        f"Nhiệt độ: <b>{payload.temperature:.1f}°C</b>",
-        f"Khói (MQ2): <b>{payload.smoke_value}</b> (preheated: {payload.mq2_preheated})",
-        f"Cảm biến khói kết nối: {"✅" if payload.smoke_connected else "❌"}",
-        f"Lửa phát hiện: {"🔥 Có" if payload.fire_detected else "✅ Không"}",
-        f"Alert active: {"🟥" if payload.alert_active else "⬜"}",
+        f"Thoi gian (UTC+7): {time_str}",
+        f"Nhiet do: <b>{payload.temperature:.1f} C</b>",
+        f"MQ-135: <b>{payload.smoke_value}</b>",
+        f"Cam bien MQ-135 ket noi: {'YES' if payload.smoke_connected else 'NO'}",
+        f"Lua phat hien: {'CO' if payload.fire_detected else 'KHONG'}",
+        f"Alert active: {'ON' if payload.alert_active else 'OFF'}",
     ]
     return "\n".join(lines)
 
@@ -164,7 +165,6 @@ def ingest(payload: schemas.IngestRequest, background_tasks: BackgroundTasks, db
         temperature=payload.temperature,
         smoke_value=payload.smoke_value,
         smoke_connected=payload.smoke_connected,
-        mq2_preheated=payload.mq2_preheated,
         fire_detected=payload.fire_detected,
         alert_active=payload.alert_active,
     )

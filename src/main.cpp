@@ -33,11 +33,9 @@ bool smokeConnected = true;
 bool fireDetected = false;
 bool alertActive = false;
 
-// Biến cho MQ2 filtering và preheat
+// Biến cho MQ-135 filtering (không dùng preheat gating)
 int smokeHistory[MOVING_AVERAGE_SIZE];
 int smokeHistoryIndex = 0;
-bool mq2Preheated = false;
-unsigned long mq2StartTime = 0;
 int lastSmokeValue = 0;
 
 // Biến thời gian
@@ -77,14 +75,26 @@ static unsigned long wifiScanLastStartMs = 0;
 
 // Biến quản lý upload async
 static bool uploadPending = false;
+static bool urgentUploadPending = false;
 static String uploadBody;
 static SemaphoreHandle_t uploadMutex = NULL;  // 🔒 Thread-safe protection
+
+// Chime khởi động sau khi setup mạng
+#if STARTUP_CHIME_ENABLED
+static bool startupChimeQueued = false;
+static bool startupChimeDone = false;
+static uint8_t startupChimeStep = 0;
+static unsigned long startupChimeNextAt = 0;
+static bool startupChimeWas4G = false; // true: 1 beep; false: 2 beeps with 0.5s gap
+#endif
 
 // Khai báo các hàm
 void readSensors();
 void checkAlerts();
 void activateAlerts();
 void deactivateAlerts();
+void buzzerOn();
+void buzzerOff();
 void startNetworking();
 void startWebServer();
 String renderHtml();
@@ -95,6 +105,7 @@ int medianFilter(int values[], int size);
 int movingAverage(int newValue);
 void tryBackendUpload();
 void uploadImmediate();
+void uploadImmediateCritical();
 void syncNTP();
 unsigned long getCurrentTimestamp();
 void checkFirmwareUpdate();
@@ -117,6 +128,53 @@ void startMainAP();
 void handleFirmwareUploadData();
 void handleFirmwareUploadComplete();
 
+// Helper để điều khiển còi qua Relay hoặc trực tiếp
+void buzzerOn() {
+  #if BUZZER_DRIVEN_BY_RELAY
+    // ON: NO → hút relay; NC → nhả relay
+    #if RELAY_CONTACT_NC
+      // NC: ON khi nhả relay
+      #if RELAY_ACTIVE_LOW
+        digitalWrite(RELAY_PIN, HIGH);  // HIGH = nhả
+      #else
+        digitalWrite(RELAY_PIN, LOW);   // LOW = nhả
+      #endif
+    #else
+      // NO: ON khi hút relay
+      #if RELAY_ACTIVE_LOW
+        digitalWrite(RELAY_PIN, LOW);   // LOW = hút
+      #else
+        digitalWrite(RELAY_PIN, HIGH);  // HIGH = hút
+      #endif
+    #endif
+  #else
+    digitalWrite(BUZZER_PIN, HIGH);
+  #endif
+}
+
+void buzzerOff() {
+  #if BUZZER_DRIVEN_BY_RELAY
+    // OFF: NO → nhả relay; NC → hút relay
+    #if RELAY_CONTACT_NC
+      // NC: OFF khi hút relay
+      #if RELAY_ACTIVE_LOW
+        digitalWrite(RELAY_PIN, LOW);   // LOW = hút
+      #else
+        digitalWrite(RELAY_PIN, HIGH);  // HIGH = hút
+      #endif
+    #else
+      // NO: OFF khi nhả relay
+      #if RELAY_ACTIVE_LOW
+        digitalWrite(RELAY_PIN, HIGH);  // HIGH = nhả
+      #else
+        digitalWrite(RELAY_PIN, LOW);   // LOW = nhả
+      #endif
+    #endif
+  #else
+    digitalWrite(BUZZER_PIN, LOW);
+  #endif
+}
+
 // Upload task chạy song song - không block web server
 void uploadTask(void* param) {
   // 🔒 Disable watchdog cho uploadTask vì nó chạy HTTP operations
@@ -125,13 +183,17 @@ void uploadTask(void* param) {
   Serial.println("[UPLOAD] Task khởi động...");
   
   while (true) {
-    if (uploadPending) {
+    if (urgentUploadPending || uploadPending) {
       if (!networkTaskCompleted) {
         // Chưa sẵn sàng mạng, đợi lần sau
         delay(500);
         continue;
       }
-      Serial.println("[UPLOAD] ⏳ Bắt đầu upload...");
+      if (urgentUploadPending) {
+        Serial.println("[UPLOAD] ⏳ Bắt đầu upload (URGENT)...");
+      } else {
+        Serial.println("[UPLOAD] ⏳ Bắt đầu upload...");
+      }
       
       // Copy uploadBody với mutex protection
       String localBody;
@@ -147,7 +209,12 @@ void uploadTask(void* param) {
         Serial.println("[UPLOAD] Trying 4G upload...");
         if (cellularBegin()) {
           String resp;
-          bool ok = cellularHttpPost(BACKEND_HOST, BACKEND_PORT, BACKEND_PATH, localBody, resp);
+          bool ok = false;
+          if (urgentUploadPending) {
+            ok = cellularHttpPostCritical(BACKEND_HOST, BACKEND_PORT, BACKEND_PATH, localBody, resp);
+          } else {
+            ok = cellularHttpPost(BACKEND_HOST, BACKEND_PORT, BACKEND_PATH, localBody, resp);
+          }
           if (ok) {
             Serial.println(String("[UPLOAD] ✅ Upload 4G OK: ") + resp);
           } else {
@@ -181,6 +248,7 @@ void uploadTask(void* param) {
       }
       
       uploadPending = false;
+      urgentUploadPending = false;
     }
     
     delay(500);  // Check every 500ms
@@ -241,6 +309,26 @@ void setup() {
     pinMode(FIRE_SENSOR_PIN, INPUT);
   #endif
   pinMode(BUZZER_PIN, OUTPUT);
+  #if BUZZER_DRIVEN_BY_RELAY
+    pinMode(RELAY_PIN, OUTPUT);
+    // Đưa relay về trạng thái OFF an toàn khi khởi động theo tiếp điểm
+    // OFF = buzzer không kêu
+    #if RELAY_CONTACT_NC
+      // NC: OFF cần hút relay
+      #if RELAY_ACTIVE_LOW
+        digitalWrite(RELAY_PIN, LOW);   // LOW = hút
+      #else
+        digitalWrite(RELAY_PIN, HIGH);  // HIGH = hút
+      #endif
+    #else
+      // NO: OFF chỉ cần nhả relay
+      #if RELAY_ACTIVE_LOW
+        digitalWrite(RELAY_PIN, HIGH);  // HIGH = nhả
+      #else
+        digitalWrite(RELAY_PIN, LOW);   // LOW = nhả
+      #endif
+    #endif
+  #endif
   pinMode(LED_PIN, OUTPUT);
   
   // Bật LED báo đang boot
@@ -249,12 +337,9 @@ void setup() {
   // Khởi tạo cảm biến nhiệt độ
   tempSensor.begin();
   
-  // Khởi tạo ADC cho MQ2
+  // Khởi tạo ADC cho MQ-135
   analogReadResolution(12);
   analogSetPinAttenuation(SMOKE_SENSOR_PIN, ADC_11db);
-  
-  // Khởi tạo MQ2 preheat timer
-  mq2StartTime = millis();
   
   // Start AP management ngay để user có thể truy cập web sớm
   startMainAP();
@@ -290,6 +375,9 @@ void networkTask(void* param) {
     
     connectionEstablished = true;
     Serial.println("✅ 4G connected (background)");
+#if STARTUP_CHIME_ENABLED
+    startupChimeWas4G = true;
+#endif
   } else {
     // Không auto connect WiFi; giữ AP-only cho quản trị
     WiFi.setAutoConnect(false);
@@ -313,6 +401,14 @@ void networkTask(void* param) {
   digitalWrite(LED_PIN, LOW);
   Serial.println("🌐 Network task completed");
   networkTaskCompleted = true;  // ✅ CHỈ ĐẶT LÀ TRUE KHI HOÀN TẤT
+#if STARTUP_CHIME_ENABLED
+  // Luôn xếp hàng chime sau khi setup mạng xong (mọi mode)
+  if (!startupChimeDone) {
+    startupChimeQueued = true;
+    startupChimeStep = 0;
+    startupChimeNextAt = millis();
+  }
+#endif
   // Remove this task from watchdog tracking before deletion to avoid WDT referencing a freed TCB
   esp_task_wdt_delete(NULL);
   vTaskDelete(NULL); // Kết thúc task
@@ -361,6 +457,46 @@ void loop() {
   tryBackendUpload();
   esp_task_wdt_reset(); // Reset after upload attempt
 
+#if STARTUP_CHIME_ENABLED
+  // Chạy chime khi đã hoàn tất network task và có yêu cầu
+  if (networkTaskCompleted && startupChimeQueued && !startupChimeDone) {
+    if (currentTime >= startupChimeNextAt) {
+      // Pattern theo yêu cầu:
+      // - Có 4G: 1 beep (100ms)
+      // - Không 4G: 2 beep, mỗi beep 100ms, cách nhau 500ms
+      switch (startupChimeStep) {
+        case 0: // delay ngắn trước khi beep
+          startupChimeNextAt = currentTime + 100;
+          startupChimeStep = 1;
+          break;
+        case 1: // Beep đầu tiên
+          buzzerOn();
+          startupChimeNextAt = currentTime + 100; // 100ms
+          startupChimeStep = 2;
+          break;
+        case 2: // Kết thúc beep 1
+          buzzerOff();
+          if (startupChimeWas4G) {
+            startupChimeDone = true; // chỉ 1 beep nếu 4G
+          } else {
+            startupChimeNextAt = currentTime + 500; // cách 0.5s
+            startupChimeStep = 3;
+          }
+          break;
+        case 3: // Beep thứ 2
+          buzzerOn();
+          startupChimeNextAt = currentTime + 100; // 100ms
+          startupChimeStep = 4;
+          break;
+        case 4: // Kết thúc
+          buzzerOff();
+          startupChimeDone = true;
+          break;
+      }
+    }
+  }
+#endif
+
   // Tăng delay để giảm tải CPU và cho phép các task khác chạy
   delay(100);
 }
@@ -377,7 +513,7 @@ void readSensors() {
   //   Serial.println("Cần điện trở pull-up 4.7kΩ giữa Data và VCC");
   // }
   
-  // Đọc giá trị cảm biến khói MQ2 với filtering nâng cao
+  // Đọc giá trị cảm biến khí MQ-135 với filtering nâng cao
   int rawSamples[MEDIAN_FILTER_SIZE];
   int minSample = 4095;
   int maxSample = 0;
@@ -404,15 +540,6 @@ void readSensors() {
   // Kiểm tra kết nối cảm biến
   smokeConnected = (maxSample - minSample) < SMOKE_FLOAT_RANGE;
   
-  // Kiểm tra preheat MQ2
-  unsigned long preheatElapsed = millis() - mq2StartTime;
-  if (!mq2Preheated && preheatElapsed >= MQ2_PREHEAT_TIME_MS) {
-    // Kiểm tra độ ổn định trong 30 giây cuối
-    if (abs(smokeValue - lastSmokeValue) < MQ2_STABLE_THRESHOLD) {
-      mq2Preheated = true;
-      Serial.println("✅ MQ2 đã preheat xong và sẵn sàng!");
-    }
-  }
   lastSmokeValue = smokeValue;
   
   // Đọc cảm biến cháy IR
@@ -424,14 +551,13 @@ void readSensors() {
   // Serial.print("Nhiệt độ DS18B20: ");
   // Serial.print(temperature);
   // Serial.println(" °C");
-  // Serial.print("Giá trị khói MQ2: ");
+  // Serial.print("Giá trị khí MQ-135: ");
   // Serial.print(smokeValue);
   // Serial.print(" (raw: ");
   // Serial.print(medianValue);
   // Serial.print(") | trạng thái: ");
   // Serial.print(smokeConnected ? "đã kết nối" : "CHƯA KẾT NỐI");
-  // Serial.print(" | preheat: ");
-  // Serial.println(mq2Preheated ? "✅ OK" : "⏳ Đang preheat...");
+  // (MQ-135: bỏ qua preheat gating)
   // Serial.print("Cảm biến cháy IR (raw): ");
   // Serial.println(irRawValue);
   // Serial.print("Cảm biến cháy IR: ");
@@ -478,8 +604,8 @@ void checkAlerts() {
       alertActive = true;
       Serial.println("🚨 CẢNH BÁO: " + alertReason);
       activateAlerts();
-      // Gửi ngay lập tức khi có cảnh báo
-      uploadImmediate();
+      // Gửi ngay lập tức khi có cảnh báo (critical path)
+      uploadImmediateCritical();
     }
   } else {
     if (alertActive) {
@@ -493,7 +619,7 @@ void checkAlerts() {
 void activateAlerts() {
   // Bật LED và còi cảnh báo
   digitalWrite(LED_PIN, HIGH);
-  digitalWrite(BUZZER_PIN, HIGH);
+  buzzerOn();
 
   // In thông báo chi tiết theo thứ tự ưu tiên
   Serial.println("=== CHI TIẾT CẢNH BÁO ===");
@@ -516,7 +642,7 @@ void activateAlerts() {
 void deactivateAlerts() {
   // Tắt LED và còi cảnh báo
   digitalWrite(LED_PIN, LOW);
-  digitalWrite(BUZZER_PIN, LOW);
+  buzzerOff();
 }
 
 void startNetworking() {
@@ -544,6 +670,9 @@ void startNetworking() {
       Serial.println("✅ 4G đã kết nối!");
       currentConnectionMode = CONNECTION_4G_FIRST;
       connectionEstablished = true;
+#if STARTUP_CHIME_ENABLED
+      startupChimeQueued = true; // Đánh dấu ready để chơi chime sau khi network task hoàn tất
+#endif
       return; // Thành công với 4G, không cần WiFi
     } else {
       Serial.printf("❌ 4G kết nối thất bại lần %d\n", retry + 1);
@@ -679,8 +808,7 @@ String renderHtml() {
   html += "<div class='network-status ";
   if (currentConnectionMode == CONNECTION_4G_FIRST) {
     html += "cellular-connected'>";
-    html += "<strong>📡 4G-First Mode</strong><br>";
-    html += "Ưu tiên 4G, không thử WiFi<br>";
+    html += "<strong>📡 Hệ thống đã nhận SIM!</strong><br>";
     // Hiển thị thông tin trạng thái 4G
     html += cellularStatusSummary();
   } else if (currentConnectionMode == CONNECTION_WIFI_FIRST) {
@@ -696,24 +824,24 @@ String renderHtml() {
     }
   } else {
     html += "ap-mode'>";
-    html += "<strong>📡 AP Mode Only</strong><br>";
-    html += "No internet connection<br>";
-    html += "Configure WiFi connection";
+    html += "<strong>📡 Không phát hiện SIM!</strong><br>";
+    html += "Không thể kết nối tới máy chủ<br>";
+    html += "Vui lòng kiểm tra lại kết nối SIM và thử lại!";
   }
   html += "</div>";
   
   html += "<div class='grid'>";
-  html += "<div class='card'><h3>🌡️ Temperature</h3><div>" + String(temperature, 1) + " °C</div></div>";
-  html += "<div class='card'><h3>💨 Smoke</h3><div>" + String(smokeValue) + (smokeConnected ? "" : " (not connected)") + "</div><small>" + (mq2Preheated ? "✅ Ready" : "⏳ Preheating...") + "</small></div>";
-  html += String("<div class='card'><h3>🔥 Fire</h3><div>") + (fireDetected ? "DETECTED" : "Normal") + "</div></div>";
-  html += String("<div class='card'><h3>🚨 Alert</h3><div class='") + (alertActive ? "warn'>CẢNH BÁO" : "ok'>Bình thường") + "</div></div>";
+  html += "<div class='card'><h3>🌡️ Nhiệt Độ</h3><div>" + String(temperature, 1) + " °C</div></div>";
+  html += "<div class='card'><h3>💨 Chất Lượng Không Khí (MQ-135)</h3><div>" + String(smokeValue) + (smokeConnected ? "" : " (not connected)") + "</div></div>";
+  html += String("<div class='card'><h3>🔥 Lửa</h3><div>") + (fireDetected ? "DETECTED" : "Normal") + "</div></div>";
+  html += String("<div class='card'><h3>🚨 Cảnh Báo</h3><div class='") + (alertActive ? "warn'>CẢNH BÁO" : "ok'>Bình thường") + "</div></div>";
   html += "</div>";
   
   // Admin actions (ẩn WiFi Setup khỏi trang chính)
   html += "<div style='margin:20px 0'>";
   html += "<h3>🔧 Admin Actions</h3>";
-  html += "<button class='button' onclick='checkFirmwareUpdate()'>🔄 Firmware Update</button>";
-  html += "<a href='/api/status' class='button'>📊 API Status</a>";
+  html += "<button class='button' onclick='checkFirmwareUpdate()'>🔄 Kiểm tra cập nhật</button>";
+  html += "<a href='/api/status' class='button'>📊 Debug</a>";
   html += "</div>";
   
   html += "<p><small>Device: " DEVICE_ID " | Firmware: " + String(FIRMWARE_VERSION) + " (Build " + String(FIRMWARE_BUILD) + ")</small></p>";
@@ -771,7 +899,7 @@ void handleApiStatus() {
     doc["temperature"] = temperature;
     doc["smoke_value"] = smokeValue;
     doc["smoke_connected"] = smokeConnected;
-    doc["mq2_preheated"] = mq2Preheated;
+    // MQ-135: không có preheat gating, bỏ trường cũ
     doc["fire_detected"] = fireDetected;
     doc["alert_active"] = alertActive;
     doc["device_id"] = DEVICE_ID;
@@ -798,7 +926,7 @@ void tryBackendUpload() {
   doc["temperature"] = temperature;
   doc["smoke_value"] = smokeValue;
   doc["smoke_connected"] = smokeConnected;
-  doc["mq2_preheated"] = mq2Preheated;
+  // MQ-135: không có preheat gating, bỏ trường cũ
   doc["fire_detected"] = fireDetected;
   doc["alert_active"] = alertActive;
   doc["device_id"] = DEVICE_ID;
@@ -823,7 +951,7 @@ void uploadImmediate() {
   doc["temperature"] = temperature;
   doc["smoke_value"] = smokeValue;
   doc["smoke_connected"] = smokeConnected;
-  doc["mq2_preheated"] = mq2Preheated;
+  // MQ-135: không có preheat gating, bỏ trường cũ
   doc["fire_detected"] = fireDetected;
   doc["alert_active"] = alertActive;
   doc["device_id"] = DEVICE_ID;
@@ -836,6 +964,26 @@ void uploadImmediate() {
     xSemaphoreGive(uploadMutex);
   }
   uploadPending = true; // Bắt đầu upload (async via uploadTask)
+}
+
+void uploadImmediateCritical() {
+  // Gửi khẩn: dùng path timeout ngắn, không retry
+  Serial.println("[UPLOAD][URGENT] ⏳ Bắt đầu upload immediate (CRITICAL)...");
+  JsonDocument doc;
+  doc["temperature"] = temperature;
+  doc["smoke_value"] = smokeValue;
+  doc["smoke_connected"] = smokeConnected;
+  doc["fire_detected"] = fireDetected;
+  doc["alert_active"] = true; // ensure marked urgent
+  doc["device_id"] = DEVICE_ID;
+  String body;
+  serializeJson(doc, body);
+
+  if (xSemaphoreTake(uploadMutex, 100)) {
+    uploadBody = body;
+    xSemaphoreGive(uploadMutex);
+  }
+  urgentUploadPending = true;
 }
 
 void testSensors() {
@@ -866,18 +1014,18 @@ void testSensors() {
   Serial.println(irValue);
   Serial.println("(0 = LOW, 1 = HIGH)");
   
-  Serial.println("🔍 Kiểm tra cảm biến khói MQ2...");
+  Serial.println("🔍 Kiểm tra cảm biến khí MQ-135...");
   int smokeTest = analogRead(SMOKE_SENSOR_PIN);
-  Serial.print("Giá trị analog MQ2: ");
+  Serial.print("Giá trị analog MQ-135: ");
   Serial.println(smokeTest);
-  Serial.println("(0-4095, giá trị cao = nhiều khói)");
+  Serial.println("(0-4095, giá trị cao = nồng độ MQ-135 cao)");
   
   Serial.println("🔍 Test LED và Buzzer...");
   digitalWrite(LED_PIN, HIGH);
-  digitalWrite(BUZZER_PIN, HIGH);
+  buzzerOn();
   delay(500);
   digitalWrite(LED_PIN, LOW);
-  digitalWrite(BUZZER_PIN, LOW);
+  buzzerOff();
   Serial.println("✅ LED và Buzzer hoạt động bình thường");
   
   Serial.println("=== KẾT THÚC TEST ===");

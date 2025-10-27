@@ -333,6 +333,80 @@ bool cellularHttpPost(const char* host, uint16_t port, const char* path, const S
   return false;
 }
 
+//=================================
+// cellularHttpPostWithOptions()
+// Configurable timeout, attempts and backoff
+//=================================
+bool cellularHttpPostWithOptions(const char* host, uint16_t port, const char* path,
+                                 const String& body, String& response,
+                                 uint16_t timeoutMs, int attempts, uint16_t backoffMs) {
+  if (cellularHttpMutex) xSemaphoreTake(cellularHttpMutex, portMAX_DELAY);
+  gsmClient.stop();
+  Serial.print("[CELL] HTTP POST(opt) to "); Serial.print(host); Serial.print(":"); Serial.println(port);
+  esp_task_wdt_reset();
+
+  HttpClient http(gsmClient, host, port);
+  http.setTimeout(timeoutMs);
+  esp_task_wdt_reset();
+
+  for (int attempt = 1; attempt <= (attempts < 1 ? 1 : attempts); attempt++) {
+    http.beginRequest();
+    http.post(path);
+    http.sendHeader("Content-Type", "application/json");
+    http.sendHeader("X-API-Key", APPLICATION_KEY);
+    http.sendHeader("Content-Length", body.length());
+    http.sendHeader("Connection", "close");
+    http.beginBody();
+    esp_task_wdt_reset();
+
+    http.print(body);
+    http.endRequest();
+    esp_task_wdt_reset();
+
+    delay(20);
+    esp_task_wdt_reset();
+
+    int statusCode = http.responseStatusCode();
+    esp_task_wdt_reset();
+    if (statusCode >= 200 && statusCode < 300) {
+      response = http.responseBody();
+      http.stop();
+      if (cellularHttpMutex) xSemaphoreGive(cellularHttpMutex);
+      Serial.print("[CELL] HTTP "); Serial.println(statusCode);
+      return true;
+    }
+
+    Serial.print("[CELL] HTTP "); Serial.println(statusCode);
+    http.stop();
+    if (attempt < attempts && (statusCode == -3 || statusCode == -2 || statusCode == -1 || statusCode == 400)) {
+      isDataConnected = false;
+      modem.sendAT("+NETCLOSE");
+      modem.waitResponse(500);
+      if (backoffMs > 0) {
+        unsigned long t0 = millis();
+        while (millis() - t0 < backoffMs) {
+          delay(50);
+          esp_task_wdt_reset();
+        }
+      }
+      continue;
+    }
+    if (cellularHttpMutex) xSemaphoreGive(cellularHttpMutex);
+    return false;
+  }
+  if (cellularHttpMutex) xSemaphoreGive(cellularHttpMutex);
+  return false;
+}
+
+//=================================
+// cellularHttpPostCritical()
+// One-shot, short timeout, no retry
+//=================================
+bool cellularHttpPostCritical(const char* host, uint16_t port, const char* path, const String& body, String& response) {
+  // 2s timeout, 1 attempt, 0 backoff
+  return cellularHttpPostWithOptions(host, port, path, body, response, 2000, 1, 0);
+}
+
 String cellularStatusSummary() {
   String s;
   s += String("Modem: ") + modem.getModemName();

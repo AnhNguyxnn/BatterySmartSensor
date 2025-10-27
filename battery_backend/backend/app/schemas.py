@@ -8,7 +8,6 @@ class IngestRequest(BaseModel):
     temperature: float
     smoke_value: int
     smoke_connected: bool
-    mq2_preheated: bool
     fire_detected: bool
     alert_active: bool
     device_id: str
@@ -26,7 +25,6 @@ class ReadingOut(BaseModel):
     temperature: float
     smoke_value: int
     smoke_connected: bool
-    mq2_preheated: bool
     fire_detected: bool
     alert_active: bool
     created_at: datetime

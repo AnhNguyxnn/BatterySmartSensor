@@ -17,6 +17,12 @@ bool cellularPowerOn();
 bool cellularBegin();
 bool cellularHttpPost(const char* host, uint16_t port, const char* path, const String& body, String& response);
 bool cellularHttpGet(const char* host, uint16_t port, const char* path, String& response);
+// POST with custom timeout/attempts/backoff
+bool cellularHttpPostWithOptions(const char* host, uint16_t port, const char* path,
+                                 const String& body, String& response,
+                                 uint16_t timeoutMs, int attempts, uint16_t backoffMs);
+// Ultra-short, no-retry POST for critical events
+bool cellularHttpPostCritical(const char* host, uint16_t port, const char* path, const String& body, String& response);
 // HTTPS qua AT (SIMCOM CHTTPS*)
 bool cellularHttpPostAT(const char* host, uint16_t port, const char* path, const String& body, String& response);
 // Reset modem hoàn toàn khi gặp lỗi
