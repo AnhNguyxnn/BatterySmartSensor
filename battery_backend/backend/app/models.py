@@ -7,7 +7,7 @@ class Reading(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     device_id = Column(String(64), index=True)
-    timestamp = Column(BigInteger, index=True)  # Unix timestamp từ ESP32
+    timestamp = Column(BigInteger, index=True)  # Unix timestamp (hiện đang dùng thời gian server)
     temperature = Column(Float)
     smoke_value = Column(Integer)
     smoke_connected = Column(Boolean)

@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 import os
 import json
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+# from typing import Optional  # unused
 import requests
 
 models.Base.metadata.create_all(bind=engine)
@@ -28,28 +28,18 @@ templates = Jinja2Templates(directory="backend/app/templates")
 
 # Thêm filter để convert timestamp thành datetime với timezone (safe version)
 def timestamp_to_datetime(timestamp):
-    """Convert Unix timestamp to readable datetime string with timezone"""
+    """Convert Unix timestamp to local time (UTC+7) string; return labels for invalid/missing."""
     try:
-        print(f"Converting timestamp: {timestamp}")
-        if timestamp and timestamp > 0:
-            # Kiểm tra timestamp hợp lệ (từ 2020 đến 2030)
-            if timestamp < 1577836800 or timestamp > 1893456000:
-                print(f"Invalid timestamp range: {timestamp}")
-                return f"Invalid ({timestamp})"
-            
-            # Sử dụng timezone-aware datetime
-            dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-            # Convert về timezone local (UTC+7)
-            local_tz = timezone(timedelta(hours=7))
-            local_dt = dt.astimezone(local_tz)
-            result = local_dt.strftime("%Y-%m-%d %H:%M:%S")
-            print(f"Converted successfully: {timestamp} -> {result}")
-            return result
-        else:
-            print(f"No timestamp: {timestamp}")
+        if not timestamp or timestamp <= 0:
             return "No timestamp"
-    except (ValueError, OSError, OverflowError) as e:
-        print(f"Error converting timestamp {timestamp}: {e}")
+        # Validate a reasonable range (2020–2030) to avoid nonsense values
+        if timestamp < 1577836800 or timestamp > 1893456000:
+            return f"Invalid ({timestamp})"
+
+        dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        local_dt = dt.astimezone(timezone(timedelta(hours=7)))
+        return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, OSError, OverflowError):
         return f"Error ({timestamp})"
 
 # Đăng ký filter với Jinja2

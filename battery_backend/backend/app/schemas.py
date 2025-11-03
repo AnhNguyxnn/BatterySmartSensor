@@ -21,7 +21,7 @@ class IngestResponse(BaseModel):
 class ReadingOut(BaseModel):
     id: int
     device_id: str
-    timestamp: int  # Unix timestamp từ ESP32
+    timestamp: int  # Unix timestamp (hiện đang dùng thời gian server)
     temperature: float
     smoke_value: int
     smoke_connected: bool
