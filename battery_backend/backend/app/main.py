@@ -14,6 +14,26 @@ import requests
 
 models.Base.metadata.create_all(bind=engine)
 
+# Simple migration: ensure new columns exist when using SQLite
+def ensure_migrations():
+    try:
+        if str(engine.url).startswith("sqlite"):
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                res = conn.execute(text("PRAGMA table_info(readings)"))
+                cols = {row[1] for row in res}
+                if "fire_value" not in cols:
+                    conn.execute(text("ALTER TABLE readings ADD COLUMN fire_value INTEGER"))
+                    print("✅ Added column fire_value to readings")
+                for col in ("temp_alert","smoke_alert","fire_alert"):
+                    if col not in cols:
+                        conn.execute(text(f"ALTER TABLE readings ADD COLUMN {col} BOOLEAN"))
+                        print(f"✅ Added column {col} to readings")
+    except Exception as e:
+        print(f"⚠️ Migration check failed: {e}")
+
+ensure_migrations()
+
 app = FastAPI(title="Battery Monitor Backend")
 
 app.add_middleware(
@@ -100,17 +120,24 @@ def send_telegram_message(text: str):
         print(f"⚠️ Telegram send error: {e}")
 
 def format_alert_message(payload: schemas.IngestRequest, server_timestamp: int) -> str:
-    # Simple alert message including temperature, smoke, and fire status (ASCII only for compatibility)
+    # Simple alert message including temperature, smoke, and fire analog value (ASCII only for compatibility)
     time_str = datetime.fromtimestamp(server_timestamp, tz=timezone(timedelta(hours=7))).strftime("%Y-%m-%d %H:%M:%S")
+    modules = []
+    if payload.temp_alert:
+        modules.append("NHIET DO")
+    if payload.smoke_alert:
+        modules.append("MQ-135")
+    if payload.fire_alert:
+        modules.append("KY-026")
+
     lines = [
         "<b>CANH BAO</b> tu thiet bi",
         f"Device: <code>{payload.device_id}</code>",
         f"Thoi gian (UTC+7): {time_str}",
         f"Nhiet do: <b>{payload.temperature:.1f} C</b>",
         f"MQ-135: <b>{payload.smoke_value}</b>",
-        f"Cam bien MQ-135 ket noi: {'YES' if payload.smoke_connected else 'NO'}",
-        f"Lua phat hien: {'CO' if payload.fire_detected else 'KHONG'}",
-        f"Alert active: {'ON' if payload.alert_active else 'OFF'}",
+        f"KY-026 (10-bit): <b>{payload.fire_value}</b>",
+        f"Modules: {', '.join(modules) if modules else 'NONE'}",
     ]
     return "\n".join(lines)
 
@@ -154,17 +181,18 @@ def ingest(payload: schemas.IngestRequest, background_tasks: BackgroundTasks, db
         timestamp=server_timestamp,  # Sử dụng thời gian server
         temperature=payload.temperature,
         smoke_value=payload.smoke_value,
-        smoke_connected=payload.smoke_connected,
-        fire_detected=payload.fire_detected,
-        alert_active=payload.alert_active,
+        fire_value=payload.fire_value,
+        temp_alert=payload.temp_alert,
+        smoke_alert=payload.smoke_alert,
+        fire_alert=payload.fire_alert,
     )
     db.add(entity)
     db.commit()
     db.refresh(entity)
 
-    # Send Telegram alert asynchronously if alert is active or fire detected
+    # Send Telegram alert asynchronously if any module alerts
     try:
-        if payload.alert_active or payload.fire_detected:
+        if payload.temp_alert or payload.smoke_alert or payload.fire_alert:
             message = format_alert_message(payload, server_timestamp)
             background_tasks.add_task(send_telegram_message, message)
     except Exception as e:

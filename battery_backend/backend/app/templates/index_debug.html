@@ -24,8 +24,9 @@
       <div>Device: <span class="font-medium">{{ r.device_id }}</span></div>
       <div>Temp: <span class="font-medium">{{ '%.1f'|format(r.temperature) }} °C</span></div>
       <div>MQ-135: <span class="font-medium">{{ r.smoke_value }}</span></div>
-      <div>Fire: <span class="font-medium">{{ 'DETECTED' if r.fire_detected else 'Normal' }}</span></div>
-      <div>Alert: <span class="font-medium">{{ 'ON' if r.alert_active else 'OFF' }}</span></div>
+      <div>Fire (10-bit): <span class="font-medium">{{ r.fire_value }}</span></div>
+      <div>Modules: <span class="font-medium">{{ (['Temp'] if r.temp_alert else []) + (['MQ-135'] if r.smoke_alert else []) + (['KY-026'] if r.fire_alert else []) | join(', ') or '-' }}</span></div>
+      
       <div>Server Time: <span class="font-medium">{{ r.created_at | datetime_to_local }}</span></div>
       <div class="col-span-full">Device Time: <span class="font-medium">{{ r.timestamp | timestamp_to_datetime }}</span></div>
     </div>

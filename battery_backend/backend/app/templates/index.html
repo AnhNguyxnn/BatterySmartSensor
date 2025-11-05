@@ -33,8 +33,9 @@
     <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 class="text-sm font-semibold text-slate-600">Trạng thái</h3>
       <div class="mt-3 flex flex-wrap gap-2">
-        <span class="px-2 py-1 rounded-full text-xs font-medium {{ 'bg-red-100 text-red-700' if latest.fire_detected else 'bg-emerald-100 text-emerald-700' }}">{{ 'Phát hiện LỬA' if latest.fire_detected else 'Bình thường' }}</span>
-        <span class="px-2 py-1 rounded-full text-xs font-medium {{ 'bg-amber-100 text-amber-700' if latest.alert_active else 'bg-slate-100 text-slate-700' }}">Alert: {{ 'ON' if latest.alert_active else 'OFF' }}</span>
+        {% if latest.temp_alert %}<span class="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">Temp</span>{% endif %}
+        {% if latest.smoke_alert %}<span class="px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">MQ-135</span>{% endif %}
+        {% if latest.fire_alert %}<span class="px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700">KY-026</span>{% endif %}
       </div>
     </section>
     {% else %}
@@ -56,8 +57,8 @@
             <th class="py-2 pr-3">Thời gian</th>
             <th class="py-2 pr-3">Nhiệt độ</th>
             <th class="py-2 pr-3">MQ-135</th>
-            <th class="py-2 pr-3">Lửa</th>
-            <th class="py-2 pr-3">Alert</th>
+            <th class="py-2 pr-3">Lửa (10-bit)</th>
+            <th class="py-2 pr-3">Modules</th>
             <th class="py-2 pr-3">Thiết bị</th>
           </tr>
         </thead>
@@ -67,11 +68,13 @@
             <td class="py-2 pr-3 whitespace-nowrap">{{ r.created_at | datetime_to_local }}</td>
             <td class="py-2 pr-3">{{ '%.1f'|format(r.temperature) }} °C</td>
             <td class="py-2 pr-3">{{ r.smoke_value }}</td>
+            <td class="py-2 pr-3">{{ r.fire_value }}</td>
             <td class="py-2 pr-3">
-              <span class="px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-red-100 text-red-700' if r.fire_detected else 'bg-emerald-100 text-emerald-700' }}">{{ 'Có' if r.fire_detected else 'Không' }}</span>
-            </td>
-            <td class="py-2 pr-3">
-              <span class="px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-amber-100 text-amber-700' if r.alert_active else 'bg-slate-100 text-slate-700' }}">{{ 'ON' if r.alert_active else 'OFF' }}</span>
+              {% set mods = [] %}
+              {% if r.temp_alert %}{% set _ = mods.append('Temp') %}{% endif %}
+              {% if r.smoke_alert %}{% set _ = mods.append('MQ-135') %}{% endif %}
+              {% if r.fire_alert %}{% set _ = mods.append('KY-026') %}{% endif %}
+              {{ ', '.join(mods) if mods else '-' }}
             </td>
             <td class="py-2 pr-3 text-slate-600">{{ r.device_id }}</td>
           </tr>

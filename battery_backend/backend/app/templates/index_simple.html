@@ -17,8 +17,9 @@
       <div><span class="text-slate-500">Device:</span> <span class="font-medium">{{ latest.device_id }}</span></div>
       <div><span class="text-slate-500">Temp:</span> <span class="font-medium">{{ '%.1f'|format(latest.temperature) }} °C</span></div>
       <div><span class="text-slate-500">MQ-135:</span> <span class="font-medium">{{ latest.smoke_value }}</span></div>
-      <div><span class="text-slate-500">Fire:</span> <span class="font-medium">{{ 'DETECTED' if latest.fire_detected else 'Normal' }}</span></div>
-      <div><span class="text-slate-500">Alert:</span> <span class="font-medium">{{ 'ON' if latest.alert_active else 'OFF' }}</span></div>
+      <div><span class="text-slate-500">Fire (10-bit):</span> <span class="font-medium">{{ latest.fire_value }}</span></div>
+      <div><span class="text-slate-500">Modules:</span> <span class="font-medium">{{ (['Temp'] if latest.temp_alert else []) + (['MQ-135'] if latest.smoke_alert else []) + (['KY-026'] if latest.fire_alert else []) | join(', ') or '-' }}</span></div>
+      
       <div><span class="text-slate-500">Time:</span> <span class="font-medium">{{ latest.created_at | datetime_to_local }}</span></div>
       <div class="col-span-full"><span class="text-slate-500">Device Time:</span> <span class="font-medium">{{ latest.timestamp | timestamp_to_datetime }}</span></div>
     </div>

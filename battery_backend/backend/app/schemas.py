@@ -7,9 +7,10 @@ class IngestRequest(BaseModel):
     timestamp: Optional[int] = None  # Không bắt buộc, server sẽ tự tạo
     temperature: float
     smoke_value: int
-    smoke_connected: bool
-    fire_detected: bool
-    alert_active: bool
+    fire_value: int  # KY-026 10-bit (0..1023)
+    temp_alert: bool = False
+    smoke_alert: bool = False
+    fire_alert: bool = False
     device_id: str
 
 
@@ -24,9 +25,10 @@ class ReadingOut(BaseModel):
     timestamp: int  # Unix timestamp (hiện đang dùng thời gian server)
     temperature: float
     smoke_value: int
-    smoke_connected: bool
-    fire_detected: bool
-    alert_active: bool
+    fire_value: int
+    temp_alert: bool
+    smoke_alert: bool
+    fire_alert: bool
     created_at: datetime
 
     class Config:

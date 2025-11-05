@@ -29,9 +29,13 @@ DallasTemperature tempSensor(&oneWire);
 // Biến lưu trữ dữ liệu
 float temperature = 0.0;
 int smokeValue = 0;
-bool smokeConnected = true;
-bool fireDetected = false;
 bool alertActive = false;
+int fireValue10 = 0; // KY-026 analog value (0..1023)
+bool tempAlertFlag = false;
+bool smokeAlertFlag = false;
+bool fireAlertFlag = false;
+static bool buzzerIsOn = false;
+static bool relayActiveLowRuntime = RELAY_ACTIVE_LOW; // Cho phép đổi mode tại runtime
 
 // Biến cho MQ-135 filtering (không dùng preheat gating)
 int smokeHistory[MOVING_AVERAGE_SIZE];
@@ -131,48 +135,22 @@ void handleFirmwareUploadComplete();
 // Helper để điều khiển còi qua Relay hoặc trực tiếp
 void buzzerOn() {
   #if BUZZER_DRIVEN_BY_RELAY
-    // ON: NO → hút relay; NC → nhả relay
-    #if RELAY_CONTACT_NC
-      // NC: ON khi nhả relay
-      #if RELAY_ACTIVE_LOW
-        digitalWrite(RELAY_PIN, HIGH);  // HIGH = nhả
-      #else
-        digitalWrite(RELAY_PIN, LOW);   // LOW = nhả
-      #endif
-    #else
-      // NO: ON khi hút relay
-      #if RELAY_ACTIVE_LOW
-        digitalWrite(RELAY_PIN, LOW);   // LOW = hút
-      #else
-        digitalWrite(RELAY_PIN, HIGH);  // HIGH = hút
-      #endif
-    #endif
+    // Đơn giản hóa: ON = kích relay theo mức ACTIVE
+    digitalWrite(RELAY_PIN, relayActiveLowRuntime ? LOW : HIGH);
   #else
     digitalWrite(BUZZER_PIN, HIGH);
   #endif
+  buzzerIsOn = true;
 }
 
 void buzzerOff() {
   #if BUZZER_DRIVEN_BY_RELAY
-    // OFF: NO → nhả relay; NC → hút relay
-    #if RELAY_CONTACT_NC
-      // NC: OFF khi hút relay
-      #if RELAY_ACTIVE_LOW
-        digitalWrite(RELAY_PIN, LOW);   // LOW = hút
-      #else
-        digitalWrite(RELAY_PIN, HIGH);  // HIGH = hút
-      #endif
-    #else
-      // NO: OFF khi nhả relay
-      #if RELAY_ACTIVE_LOW
-        digitalWrite(RELAY_PIN, HIGH);  // HIGH = nhả
-      #else
-        digitalWrite(RELAY_PIN, LOW);   // LOW = nhả
-      #endif
-    #endif
+    // Đơn giản hóa: OFF = thả relay (mức INACTIVE)
+    digitalWrite(RELAY_PIN, relayActiveLowRuntime ? HIGH : LOW);
   #else
     digitalWrite(BUZZER_PIN, LOW);
   #endif
+  buzzerIsOn = false;
 }
 
 // Upload task chạy song song - không block web server
@@ -303,31 +281,11 @@ void setup() {
   }
   
   // GPIO setup
-  #if FIRE_INPUT_PULLUP
-    pinMode(FIRE_SENSOR_PIN, INPUT_PULLUP);
-  #else
-    pinMode(FIRE_SENSOR_PIN, INPUT);
-  #endif
   pinMode(BUZZER_PIN, OUTPUT);
   #if BUZZER_DRIVEN_BY_RELAY
     pinMode(RELAY_PIN, OUTPUT);
-    // Đưa relay về trạng thái OFF an toàn khi khởi động theo tiếp điểm
-    // OFF = buzzer không kêu
-    #if RELAY_CONTACT_NC
-      // NC: OFF cần hút relay
-      #if RELAY_ACTIVE_LOW
-        digitalWrite(RELAY_PIN, LOW);   // LOW = hút
-      #else
-        digitalWrite(RELAY_PIN, HIGH);  // HIGH = hút
-      #endif
-    #else
-      // NO: OFF chỉ cần nhả relay
-      #if RELAY_ACTIVE_LOW
-        digitalWrite(RELAY_PIN, HIGH);  // HIGH = nhả
-      #else
-        digitalWrite(RELAY_PIN, LOW);   // LOW = nhả
-      #endif
-    #endif
+    // Đưa relay về trạng thái OFF an toàn khi khởi động theo runtime mode
+    digitalWrite(RELAY_PIN, relayActiveLowRuntime ? HIGH : LOW);
   #endif
   pinMode(LED_PIN, OUTPUT);
   
@@ -337,9 +295,10 @@ void setup() {
   // Khởi tạo cảm biến nhiệt độ
   tempSensor.begin();
   
-  // Khởi tạo ADC cho MQ-135
+  // Khởi tạo ADC cho MQ-135 & KY-026 (Analog)
   analogReadResolution(12);
   analogSetPinAttenuation(SMOKE_SENSOR_PIN, ADC_11db);
+  analogSetPinAttenuation(FIRE_SENSOR_ANALOG_PIN, ADC_11db);
   
   // Start AP management ngay để user có thể truy cập web sớm
   startMainAP();
@@ -537,82 +496,74 @@ void readSensors() {
   // Áp dụng moving average để làm mượt
   smokeValue = movingAverage(medianValue);
   
-  // Kiểm tra kết nối cảm biến
-  smokeConnected = (maxSample - minSample) < SMOKE_FLOAT_RANGE;
-  
+  // Không dùng smokeConnected; chỉ lưu giá trị đo
   lastSmokeValue = smokeValue;
   
-  // Đọc cảm biến cháy IR
-  int irRawValue = digitalRead(FIRE_SENSOR_PIN);
-  fireDetected = (irRawValue == FIRE_THRESHOLD);
-  
-  // In dữ liệu ra Serial Monitor
-  // Serial.println("=== Dữ liệu cảm biến ===");
-  // Serial.print("Nhiệt độ DS18B20: ");
-  // Serial.print(temperature);
-  // Serial.println(" °C");
-  // Serial.print("Giá trị khí MQ-135: ");
-  // Serial.print(smokeValue);
-  // Serial.print(" (raw: ");
-  // Serial.print(medianValue);
-  // Serial.print(") | trạng thái: ");
-  // Serial.print(smokeConnected ? "đã kết nối" : "CHƯA KẾT NỐI");
-  // (MQ-135: bỏ qua preheat gating)
-  // Serial.print("Cảm biến cháy IR (raw): ");
-  // Serial.println(irRawValue);
-  // Serial.print("Cảm biến cháy IR: ");
-  // Serial.println(fireDetected ? "CÓ CHÁY!" : "Bình thường");
-  // Serial.println("========================");
+  // Đọc cảm biến lửa KY-026 qua Analog
+  int fireSamples[5];
+  for (int i = 0; i < 5; i++) {
+    fireSamples[i] = analogRead(FIRE_SENSOR_ANALOG_PIN);
+    if (i % 2 == 0) { esp_task_wdt_reset(); }
+    delayMicroseconds(100);
+  }
+  int fireMedian = medianFilter(fireSamples, 5);
+  int fireMedian10 = fireMedian >> 2; // chuyển 12-bit → 10-bit (0..1023)
+  fireValue10 = fireMedian10;
 }
 
 void checkAlerts() {
   bool tempAlert = (temperature > TEMP_THRESHOLD);
   bool smokeAlert = (smokeValue > SMOKE_THRESHOLD);
-  bool fireDetectedAlert = fireDetected;
+  bool fireAlert = (fireValue10 < FIRE_ANALOG_THRESHOLD); // KY-026: giá trị thấp hơn = gần lửa
 
   int activeModules = 0;
   if (tempAlert) activeModules++;
   if (smokeAlert) activeModules++;
-  if (fireDetectedAlert) activeModules++;
+  if (fireAlert) activeModules++;
 
-  // Mức độ nhạy theo cấu hình
-  const int requiredModules = ALERT_SENSITIVITY; // 1=cao, 2=trung, 3=nhẹ
+  // Bỏ SENSITIVITY: chỉ cần 1 mô-đun cảnh báo là báo
+  bool shouldAlert = (activeModules >= 1);
 
-  bool shouldAlert = (activeModules >= requiredModules);
+  // Lưu cờ cho upload/backend
+  tempAlertFlag = tempAlert;
+  smokeAlertFlag = smokeAlert;
+  fireAlertFlag = fireAlert;
 
   String alertReason = "";
   if (shouldAlert) {
-    if (activeModules == 3) {
-      alertReason = "🔥🔥🔥 3 mô-đun cảnh báo đồng thời";
-    } else if (activeModules == 2) {
-      alertReason = "🔥🔥 2 mô-đun cảnh báo";
-    } else {
-      // activeModules == 1
-      if (tempAlert) {
-        alertReason = "🔥 NHIỆT ĐỘ CAO (" + String(temperature, 1) + "°C)";
-      } else if (smokeAlert) {
-        alertReason = "💨 KHÍ ĐỘC HẠI (" + String(smokeValue) + ")";
-      } else if (fireDetectedAlert) {
-        alertReason = "🔍 IR FIRE phát hiện cháy";
-      }
+    // Liệt kê các mô-đun đang cảnh báo (không dùng sensitivity)
+    if (tempAlert) {
+      alertReason += "🔥 NHIỆT ĐỘ CAO (" + String(temperature, 1) + "°C)";
+    }
+    if (smokeAlert) {
+      if (alertReason.length()) alertReason += " | ";
+      alertReason += "💨 KHÍ ĐỘC HẠI (" + String(smokeValue) + ")";
+    }
+    if (fireAlert) {
+      if (alertReason.length()) alertReason += " | ";
+      alertReason += "🔥 LỬA (KY-026)";
     }
   }
 
-  // Kích hoạt/tắt cảnh báo
+  // Kích hoạt/tắt cảnh báo và đảm bảo trạng thái còi/LED theo thời gian thực
   if (shouldAlert) {
     if (!alertActive) {
       alertActive = true;
       Serial.println("🚨 CẢNH BÁO: " + alertReason);
-      activateAlerts();
       // Gửi ngay lập tức khi có cảnh báo (critical path)
       uploadImmediateCritical();
     }
+    // Đảm bảo bật còi/LED khi đang trong trạng thái cảnh báo
+    digitalWrite(LED_PIN, HIGH);
+    if (!buzzerIsOn) buzzerOn();
   } else {
     if (alertActive) {
       alertActive = false;
       Serial.println("✅ Tình trạng bình thường");
-      deactivateAlerts();
     }
+    // Đảm bảo tắt còi/LED khi hết cảnh báo
+    digitalWrite(LED_PIN, LOW);
+    if (buzzerIsOn) buzzerOff();
   }
 }
 
@@ -631,9 +582,8 @@ void activateAlerts() {
   if (smokeValue > SMOKE_THRESHOLD) {
     Serial.println("💨 KHÍ ĐỘC HẠI: " + String(smokeValue) + " (Pin có thể xì khí)");
   }
-  
-  if (fireDetected) {
-    Serial.println("🔍 IR FIRE: Phát hiện cháy (Cần xác minh)");
+  if (fireValue10 < FIRE_ANALOG_THRESHOLD) {
+    Serial.println("🔥 LỬA (KY-026): " + String(fireValue10) + " (< ngưỡng " + String(FIRE_ANALOG_THRESHOLD) + ")");
   }
   
   Serial.println("=========================");
@@ -733,6 +683,21 @@ void ensureAdminAP() {
 void startWebServer() {
   server.on("/", handleRoot);
   server.on("/api/status", HTTP_GET, handleApiStatus);
+  // Removed test endpoints for buzzer and relay-mode per request
+
+  // Generic GPIO test endpoint: /api/gpio?pin=18&level=1
+  server.on("/api/gpio", HTTP_GET, [](){
+    if (!server.hasArg("pin")) { server.send(400, "application/json", "{\"error\":\"missing pin\"}"); return; }
+    int pin = server.arg("pin").toInt();
+    pinMode(pin, OUTPUT);
+    if (server.hasArg("level")) {
+      int level = server.arg("level").toInt();
+      digitalWrite(pin, level ? HIGH : LOW);
+    }
+    int lv = digitalRead(pin);
+    String res = String("{\"pin\":") + pin + ",\"level\":" + lv + "}";
+    server.send(200, "application/json", res);
+  });
   // Common browser requests
   server.on("/favicon.ico", HTTP_GET, [](){ server.send(204); });
   server.on("/apple-touch-icon.png", HTTP_GET, [](){ server.send(204); });
@@ -832,8 +797,8 @@ String renderHtml() {
   
   html += "<div class='grid'>";
   html += "<div class='card'><h3>🌡️ Nhiệt Độ</h3><div>" + String(temperature, 1) + " °C</div></div>";
-  html += "<div class='card'><h3>💨 Chất Lượng Không Khí (MQ-135)</h3><div>" + String(smokeValue) + (smokeConnected ? "" : " (not connected)") + "</div></div>";
-  html += String("<div class='card'><h3>🔥 Lửa</h3><div>") + (fireDetected ? "DETECTED" : "Normal") + "</div></div>";
+  html += "<div class='card'><h3>💨 Chất Lượng Không Khí (MQ-135)</h3><div>" + String(smokeValue) + "</div></div>";
+  html += "<div class='card'><h3>🔥 Lửa (KY-026)</h3><div>" + String(fireValue10) + "</div></div>";
   html += String("<div class='card'><h3>🚨 Cảnh Báo</h3><div class='") + (alertActive ? "warn'>CẢNH BÁO" : "ok'>Bình thường") + "</div></div>";
   html += "</div>";
   
@@ -898,10 +863,16 @@ void handleApiStatus() {
     // doc["timestamp"] = getCurrentTimestamp();
     doc["temperature"] = temperature;
     doc["smoke_value"] = smokeValue;
-    doc["smoke_connected"] = smokeConnected;
     // MQ-135: không có preheat gating, bỏ trường cũ
-    doc["fire_detected"] = fireDetected;
-    doc["alert_active"] = alertActive;
+    doc["fire_value"] = fireValue10; // KY-026 10-bit
+    // Debug states
+    doc["temp_alert"] = tempAlertFlag;
+    doc["smoke_alert"] = smokeAlertFlag;
+    doc["fire_alert"] = fireAlertFlag;
+    doc["buzzer_is_on"] = buzzerIsOn;
+    doc["relay_pin"] = RELAY_PIN;
+    doc["relay_active_low_runtime"] = relayActiveLowRuntime;
+    doc["relay_level"] = (int)digitalRead(RELAY_PIN);
     doc["device_id"] = DEVICE_ID;
     serializeJson(doc, json);
   }
@@ -925,10 +896,11 @@ void tryBackendUpload() {
   // Không gửi timestamp, để server tự tạo
   doc["temperature"] = temperature;
   doc["smoke_value"] = smokeValue;
-  doc["smoke_connected"] = smokeConnected;
   // MQ-135: không có preheat gating, bỏ trường cũ
-  doc["fire_detected"] = fireDetected;
-  doc["alert_active"] = alertActive;
+  doc["fire_value"] = fireValue10; // KY-026 10-bit
+  doc["temp_alert"] = tempAlertFlag;
+  doc["smoke_alert"] = smokeAlertFlag;
+  doc["fire_alert"] = fireAlertFlag;
   doc["device_id"] = DEVICE_ID;
   String body;
   serializeJson(doc, body);
@@ -950,10 +922,11 @@ void uploadImmediate() {
   // Không gửi timestamp, để server tự tạo
   doc["temperature"] = temperature;
   doc["smoke_value"] = smokeValue;
-  doc["smoke_connected"] = smokeConnected;
   // MQ-135: không có preheat gating, bỏ trường cũ
-  doc["fire_detected"] = fireDetected;
-  doc["alert_active"] = alertActive;
+  doc["fire_value"] = fireValue10; // KY-026 10-bit
+  doc["temp_alert"] = tempAlertFlag;
+  doc["smoke_alert"] = smokeAlertFlag;
+  doc["fire_alert"] = fireAlertFlag;
   doc["device_id"] = DEVICE_ID;
   String body;
   serializeJson(doc, body);
@@ -972,9 +945,10 @@ void uploadImmediateCritical() {
   JsonDocument doc;
   doc["temperature"] = temperature;
   doc["smoke_value"] = smokeValue;
-  doc["smoke_connected"] = smokeConnected;
-  doc["fire_detected"] = fireDetected;
-  doc["alert_active"] = true; // ensure marked urgent
+  doc["fire_value"] = fireValue10; // KY-026 10-bit
+  doc["temp_alert"] = tempAlertFlag;
+  doc["smoke_alert"] = smokeAlertFlag;
+  doc["fire_alert"] = fireAlertFlag;
   doc["device_id"] = DEVICE_ID;
   String body;
   serializeJson(doc, body);
@@ -1008,11 +982,12 @@ void testSensors() {
     Serial.println(" °C");
   }
   
-  Serial.println("🔍 Kiểm tra cảm biến cháy IR...");
-  int irValue = digitalRead(FIRE_SENSOR_PIN);
-  Serial.print("Giá trị raw cảm biến IR: ");
-  Serial.println(irValue);
-  Serial.println("(0 = LOW, 1 = HIGH)");
+  Serial.println("🔍 Kiểm tra cảm biến lửa KY-026 (Analog)...");
+  int fireTest = analogRead(FIRE_SENSOR_ANALOG_PIN);
+  int fireTest10 = fireTest >> 2; // 12-bit → 10-bit
+  Serial.print("Giá trị analog KY-026 (10-bit): ");
+  Serial.println(fireTest10);
+  Serial.println("(0-1023, so với FIRE_ANALOG_THRESHOLD)");
   
   Serial.println("🔍 Kiểm tra cảm biến khí MQ-135...");
   int smokeTest = analogRead(SMOKE_SENSOR_PIN);

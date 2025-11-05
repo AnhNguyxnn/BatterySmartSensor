@@ -45,20 +45,17 @@
 // Cấu hình GPIO Pins
 #define TEMP_SENSOR_PIN 23        // DS18B20
 #define SMOKE_SENSOR_PIN 35      // MQ-135 (Analog) → ESP32 ADC1 GPIO36 (VP). Tránh ADC2 khi dùng WiFi
-#define FIRE_SENSOR_PIN 2        // IR Fire Sensor (Digital)
-// Một số module MH flame/IR có ngõ ra active-LOW/open-collector, cần kéo lên
-#define FIRE_INPUT_PULLUP 1      // 1: dùng INPUT_PULLUP cho chân IR, 0: dùng INPUT
+#define FIRE_SENSOR_ANALOG_PIN 34 // KY-026 Flame (Analog AO) → ESP32 ADC1 GPIO34
+// Nếu dùng ngõ ra Digital của module (không khuyến nghị), bật pull-up theo wiring
+#define FIRE_INPUT_PULLUP 0      // Không dùng digital cho KY-026; để 0
 #define BUZZER_PIN 18            // Còi cảnh báo
 #define LED_PIN 19               // LED cảnh báo
 
 // Còi điều khiển qua relay (nếu đang dùng module RELAY đóng/ngắt nguồn cho buzzer)
 #define BUZZER_DRIVEN_BY_RELAY 1   // 1: Buzzer điều khiển qua Relay, 0: điều khiển trực tiếp chân BUZZER_PIN
-#define RELAY_PIN BUZZER_PIN       // Có thể đổi sang GPIO khác nếu relay nối chân khác
-#define RELAY_ACTIVE_LOW 0         // 1: Relay active-LOW (phổ biến), 0: active-HIGH
-// Chọn tiếp điểm relay đang dùng để cấp nguồn cho buzzer
-// 0: dùng tiếp điểm NO (thường mở) → Buzzer OFF khi relay nhả; ON khi relay hút
-// 1: dùng tiếp điểm NC (thường đóng) → Buzzer ON khi relay nhả; OFF khi relay hút
-#define RELAY_CONTACT_NC 1
+#define RELAY_PIN 22               // Chân điều khiển Relay (IN) → GPIO22
+#define RELAY_ACTIVE_LOW 1         // 1: Relay active-LOW (phổ biến), 0: active-HIGH
+
 
 // Âm báo khi thiết bị hoàn tất setup mạng
 #define STARTUP_CHIME_ENABLED 1     // 1: Bật âm báo khởi động sau khi setup mạng xong
@@ -67,16 +64,12 @@
 // Ngưỡng cảnh báo (theo thứ tự ưu tiên)
 #define TEMP_THRESHOLD 60.0      // Nhiệt độ nguy hiểm (°C) - ƯU TIÊN CAO NHẤT
 #define SMOKE_THRESHOLD 300      // Ngưỡng khí MQ-135 (0-4095, 12-bit ADC) - ƯU TIÊN TRUNG BÌNH
-#define FIRE_THRESHOLD LOW       // Ngưỡng cảm biến cháy IR - ƯU TIÊN THẤP NHẤT
+#define FIRE_ANALOG_THRESHOLD 375  // KY-026 10-bit (0-1023). Cảnh báo khi fire_value < ngưỡng
 
 // Ngưỡng phụ cho logic phức tạp
 #define TEMP_SMOKE_THRESHOLD_MULTIPLIER 0.8  // 80% của TEMP_THRESHOLD cho MQ-135 + Temp
 
-// Cấu hình độ nhạy cảnh báo (ALERT)
-// 1 = cao (chỉ cần 1 module cảnh báo)
-// 2 = trung (cần 2 module cảnh báo)
-// 3 = nhẹ (cần cả 3 module cảnh báo)
-#define ALERT_SENSITIVITY 2
+
 
 // Cấu hình thời gian
 #define SENSOR_INTERVAL 1000     // Đọc cảm biến mỗi 1 giây
@@ -88,7 +81,7 @@
 
 // Firmware version info
 #define FIRMWARE_VERSION "1.0.0"
-#define FIRMWARE_BUILD 3
+#define FIRMWARE_BUILD 6
 
 // Firmware update settings
 #define FIRMWARE_CHECK_INTERVAL 43200000  // 12 giờ (43200000ms)
