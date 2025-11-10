@@ -5,13 +5,13 @@
 #include <WebServer.h>
 #include <driver/adc.h>
 #include <HTTPClient.h>
-#include "cellular.h"
+#include "src/cellular.h"
 #include <ArduinoJson.h>
-#include "config.h"
+#include "src/config.h"
 #include <time.h>
 #include <Update.h>
 #include <WiFiClientSecure.h>
-#include "firmware_update.h"
+#include "src/firmware_update.h"
 #include <SPIFFS.h>
 #include <esp_task_wdt.h>
 
@@ -134,22 +134,14 @@ void handleFirmwareUploadComplete();
 
 // Helper để điều khiển còi qua Relay hoặc trực tiếp
 void buzzerOn() {
-  #if BUZZER_DRIVEN_BY_RELAY
-    // Đơn giản hóa: ON = kích relay theo mức ACTIVE
-    digitalWrite(RELAY_PIN, relayActiveLowRuntime ? LOW : HIGH);
-  #else
-    digitalWrite(BUZZER_PIN, HIGH);
-  #endif
+  // Đơn giản hóa: ON = kích relay theo mức ACTIVE
+  digitalWrite(RELAY_PIN, relayActiveLowRuntime ? LOW : HIGH);
   buzzerIsOn = true;
 }
 
 void buzzerOff() {
-  #if BUZZER_DRIVEN_BY_RELAY
-    // Đơn giản hóa: OFF = thả relay (mức INACTIVE)
-    digitalWrite(RELAY_PIN, relayActiveLowRuntime ? HIGH : LOW);
-  #else
-    digitalWrite(BUZZER_PIN, LOW);
-  #endif
+  // Đơn giản hóa: OFF = thả relay (mức INACTIVE)
+  digitalWrite(RELAY_PIN, relayActiveLowRuntime ? HIGH : LOW);
   buzzerIsOn = false;
 }
 
@@ -281,16 +273,13 @@ void setup() {
   }
   
   // GPIO setup
-  pinMode(BUZZER_PIN, OUTPUT);
-  #if BUZZER_DRIVEN_BY_RELAY
-    pinMode(RELAY_PIN, OUTPUT);
-    // Đưa relay về trạng thái OFF an toàn khi khởi động theo runtime mode
-    digitalWrite(RELAY_PIN, relayActiveLowRuntime ? HIGH : LOW);
-  #endif
-  pinMode(LED_PIN, OUTPUT);
+  // Đặt mức an toàn trước rồi mới set OUTPUT để tránh glitch lúc boot
+  digitalWrite(RELAY_PIN, relayActiveLowRuntime ? HIGH : LOW);
+  pinMode(RELAY_PIN, OUTPUT);
+  if (LED_PIN >= 0) pinMode(LED_PIN, OUTPUT);
   
   // Bật LED báo đang boot
-  digitalWrite(LED_PIN, HIGH);
+  if (LED_PIN >= 0) digitalWrite(LED_PIN, HIGH);
   
   // Khởi tạo cảm biến nhiệt độ
   tempSensor.begin();
@@ -357,7 +346,7 @@ void networkTask(void* param) {
     Serial.println("⚠️ Chỉ log thông báo trực tiếp, không upload lên server");
   }
 
-  digitalWrite(LED_PIN, LOW);
+  if (LED_PIN >= 0) digitalWrite(LED_PIN, LOW);
   Serial.println("🌐 Network task completed");
   networkTaskCompleted = true;  // ✅ CHỈ ĐẶT LÀ TRUE KHI HOÀN TẤT
 #if STARTUP_CHIME_ENABLED
@@ -554,7 +543,7 @@ void checkAlerts() {
       uploadImmediateCritical();
     }
     // Đảm bảo bật còi/LED khi đang trong trạng thái cảnh báo
-    digitalWrite(LED_PIN, HIGH);
+    if (LED_PIN >= 0) digitalWrite(LED_PIN, HIGH);
     if (!buzzerIsOn) buzzerOn();
   } else {
     if (alertActive) {
@@ -562,14 +551,14 @@ void checkAlerts() {
       Serial.println("✅ Tình trạng bình thường");
     }
     // Đảm bảo tắt còi/LED khi hết cảnh báo
-    digitalWrite(LED_PIN, LOW);
+    if (LED_PIN >= 0) digitalWrite(LED_PIN, LOW);
     if (buzzerIsOn) buzzerOff();
   }
 }
 
 void activateAlerts() {
   // Bật LED và còi cảnh báo
-  digitalWrite(LED_PIN, HIGH);
+  if (LED_PIN >= 0) digitalWrite(LED_PIN, HIGH);
   buzzerOn();
 
   // In thông báo chi tiết theo thứ tự ưu tiên
@@ -591,7 +580,7 @@ void activateAlerts() {
 
 void deactivateAlerts() {
   // Tắt LED và còi cảnh báo
-  digitalWrite(LED_PIN, LOW);
+  if (LED_PIN >= 0) digitalWrite(LED_PIN, LOW);
   buzzerOff();
 }
 
@@ -996,10 +985,10 @@ void testSensors() {
   Serial.println("(0-4095, giá trị cao = nồng độ MQ-135 cao)");
   
   Serial.println("🔍 Test LED và Buzzer...");
-  digitalWrite(LED_PIN, HIGH);
+  if (LED_PIN >= 0) digitalWrite(LED_PIN, HIGH);
   buzzerOn();
   delay(500);
-  digitalWrite(LED_PIN, LOW);
+  if (LED_PIN >= 0) digitalWrite(LED_PIN, LOW);
   buzzerOff();
   Serial.println("✅ LED và Buzzer hoạt động bình thường");
   

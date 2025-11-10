@@ -21,7 +21,7 @@
 #define CELL_PASS "mms"                  // nếu cần
 
 // Buộc LTE-only (không 2G/3G). 1: chỉ LTE, 0: tự động
-#define CELL_FORCE_LTE_ONLY 0
+#define CELL_FORCE_LTE_ONLY 1
 
 // UART kết nối module (chọn Serial1 hoặc Serial2 phụ thuộc wiring)
 #define CELL_UART Serial2
@@ -48,12 +48,10 @@
 #define FIRE_SENSOR_ANALOG_PIN 34 // KY-026 Flame (Analog AO) → ESP32 ADC1 GPIO34
 // Nếu dùng ngõ ra Digital của module (không khuyến nghị), bật pull-up theo wiring
 #define FIRE_INPUT_PULLUP 0      // Không dùng digital cho KY-026; để 0
-#define BUZZER_PIN 18            // Còi cảnh báo
-#define LED_PIN 19               // LED cảnh báo
+#define LED_PIN -1               // LED cảnh báo (đặt -1 để vô hiệu hóa)
 
-// Còi điều khiển qua relay (nếu đang dùng module RELAY đóng/ngắt nguồn cho buzzer)
-#define BUZZER_DRIVEN_BY_RELAY 1   // 1: Buzzer điều khiển qua Relay, 0: điều khiển trực tiếp chân BUZZER_PIN
-#define RELAY_PIN 22               // Chân điều khiển Relay (IN) → GPIO22
+// Còi bắt buộc điều khiển qua relay (không hỗ trợ cắm trực tiếp buzzer)
+#define RELAY_PIN 0               // Chân điều khiển Relay (IN) → GPIO18 (ổn định, không strap nguy hiểm)
 #define RELAY_ACTIVE_LOW 1         // 1: Relay active-LOW (phổ biến), 0: active-HIGH
 
 
@@ -62,8 +60,8 @@
 
 
 // Ngưỡng cảnh báo (theo thứ tự ưu tiên)
-#define TEMP_THRESHOLD 60.0      // Nhiệt độ nguy hiểm (°C) - ƯU TIÊN CAO NHẤT
-#define SMOKE_THRESHOLD 300      // Ngưỡng khí MQ-135 (0-4095, 12-bit ADC) - ƯU TIÊN TRUNG BÌNH
+#define TEMP_THRESHOLD 90.0      // Nhiệt độ nguy hiểm (°C) - ƯU TIÊN CAO NHẤT
+#define SMOKE_THRESHOLD 2000      // Ngưỡng khí MQ-135 (0-4095, 12-bit ADC) - ƯU TIÊN TRUNG BÌNH
 #define FIRE_ANALOG_THRESHOLD 375  // KY-026 10-bit (0-1023). Cảnh báo khi fire_value < ngưỡng
 
 // Ngưỡng phụ cho logic phức tạp
@@ -81,7 +79,7 @@
 
 // Firmware version info
 #define FIRMWARE_VERSION "1.0.0"
-#define FIRMWARE_BUILD 6
+#define FIRMWARE_BUILD 7
 
 // Firmware update settings
 #define FIRMWARE_CHECK_INTERVAL 43200000  // 12 giờ (43200000ms)
