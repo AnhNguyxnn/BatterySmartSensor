@@ -2,16 +2,33 @@
 #include <esp_task_wdt.h>
 #include <Update.h>
 
-#define TINY_GSM_DEBUG Serial
+/**
+ * @file cellular.cpp
+ * @brief Hiện thực toàn bộ nghiệp vụ điều khiển modem 4G (khởi tạo, HTTP, OTA, reset).
+ *
+ * Mọi bước đều có log chi tiết và chú thích tiếng Việt để dễ truy vết khi debug ngoài hiện trường.
+ */
+
+#define TINY_GSM_DEBUG Serial  // Bật log TinyGSM ra Serial để tiện theo dõi
 
 TinyGsm modem(CELL_UART);
 TinyGsmClient gsmClient(modem);
 
-static bool isModemReady = false;
-static bool isDataConnected = false;  // Track if data connection is active
-static SemaphoreHandle_t cellularHttpMutex = NULL; // serialize 4G HTTP
+// --------------------------------------------------------------------
+// Trạng thái nội bộ của mô-đun 4G
+// --------------------------------------------------------------------
+static bool isModemReady = false;         // Đã khởi tạo modem chưa?
+static bool isDataConnected = false;      // Đã mở kết nối data (NETOPEN/PDP) chưa?
+static SemaphoreHandle_t cellularHttpMutex = NULL; // Mutex để tuần tự hóa mọi HTTP qua 4G
 
-// Hàm reset modem hoàn toàn khi gặp lỗi
+/**
+ * @brief Reset modem hoàn toàn (power cycle) khi gặp lỗi nặng.
+ *
+ * Các bước:
+ * 1. Kéo PWRKEY về trạng thái tắt.
+ * 2. Chờ 2 giây cho modem xuống.
+ * 3. Gọi lại cellularPowerOn() để bật lại.
+ */
 void cellularReset() {
   Serial.println("[CELL] Reset modem hoàn toàn...");
   isModemReady = false;
@@ -34,6 +51,11 @@ void cellularReset() {
   Serial.println("[CELL] Modem đã được reset");
 }
 
+/**
+ * @brief Gửi lệnh +CEER để ghi lại nguyên nhân lỗi kết nối gần nhất.
+ *
+ * Hàm này chỉ dùng nội bộ cho debug, do đó giữ static.
+ */
 static void logCEER() {
   modem.sendAT("+CEER");
   unsigned long t0 = millis();
@@ -56,6 +78,9 @@ static void logCEER() {
   }
 }
 
+/**
+ * @brief Thao tác bật modem bằng cách giữ PWRKEY ở mức active trong thời gian cấu hình.
+ */
 bool cellularPowerOn() {
   pinMode(CELL_PWRKEY_PIN, OUTPUT);
   #if CELL_PWRKEY_ACTIVE_LOW
@@ -77,12 +102,17 @@ bool cellularPowerOn() {
   return true;
 }
 
-//=================================
-// CLEAN LOGIC: cellularBegin()
-// Initialize modem + establish data connection
-// Return TRUE = ready to send HTTP
-// Return FALSE = cannot connect, try again later
-//=================================
+/**
+ * @brief Chu trình khởi động modem và thiết lập kết nối dữ liệu.
+ *
+ * Trình tự chính:
+ * - Khởi tạo mutex (nếu chưa có) để các task dùng chung.
+ * - Nếu modem đã sẵn sàng và data context còn hoạt động thì tái sử dụng.
+ * - Nếu chưa, thử khởi tạo UART, kiểm tra AT, SIM, ép LTE (nếu cấu hình).
+ * - Kết nối GPRS/APN, mở NETOPEN và cấu hình DNS.
+ *
+ * @return true nếu mọi bước thành công; false nếu cần thử lại sau.
+ */
 bool cellularBegin() {
   if (cellularHttpMutex == NULL) {
     cellularHttpMutex = xSemaphoreCreateMutex();
@@ -255,11 +285,16 @@ bool cellularBegin() {
   return true;
 }
 
-//=================================
-// CLEAN LOGIC: cellularHttpPost()
-// ONLY do HTTP - don't reconnect
-// If connection lost, return false
-//=================================
+/**
+ * @brief Gửi HTTP POST tiêu chuẩn qua đường 4G.
+ *
+ * Hàm không tự khởi tạo lại modem; caller phải đảm bảo đã gọi cellularBegin().
+ * - Luôn dựng lại HttpClient mới (connection close) để tránh giữ session hỏng.
+ * - Cho phép thử tối đa 2 lần đối với lỗi transport (-1/-2/-3) hoặc 400 (bad request do mất context).
+ * - Reset watchdog thường xuyên để tránh WDT khi mạng chậm.
+ *
+ * @return true nếu nhận mã phản hồi 2xx, false nếu tất cả attempt đều thất bại.
+ */
 bool cellularHttpPost(const char* host, uint16_t port, const char* path, const String& body, String& response) {
   if (cellularHttpMutex) xSemaphoreTake(cellularHttpMutex, portMAX_DELAY);
   // Đảm bảo client ở trạng thái sạch trước mỗi request
@@ -333,10 +368,11 @@ bool cellularHttpPost(const char* host, uint16_t port, const char* path, const S
   return false;
 }
 
-//=================================
-// cellularHttpPostWithOptions()
-// Configurable timeout, attempts and backoff
-//=================================
+/**
+ * @brief Biến thể POST cho phép cấu hình timeout/số lần thử/backoff tùy tình huống.
+ *
+ * Phù hợp với các API tốn thời gian (ví dụ: gửi log lớn, ota metadata).
+ */
 bool cellularHttpPostWithOptions(const char* host, uint16_t port, const char* path,
                                  const String& body, String& response,
                                  uint16_t timeoutMs, int attempts, uint16_t backoffMs) {
@@ -398,15 +434,21 @@ bool cellularHttpPostWithOptions(const char* host, uint16_t port, const char* pa
   return false;
 }
 
-//=================================
-// cellularHttpPostCritical()
-// One-shot, short timeout, no retry
-//=================================
+/**
+ * @brief Gửi POST dạng "bắn nhanh" với timeout 2 giây, không retry.
+ *
+ * Dùng cho cảnh báo khẩn để tránh block task chính quá lâu.
+ */
 bool cellularHttpPostCritical(const char* host, uint16_t port, const char* path, const String& body, String& response) {
   // 2s timeout, 1 attempt, 0 backoff
   return cellularHttpPostWithOptions(host, port, path, body, response, 2000, 1, 0);
 }
 
+/**
+ * @brief Gom thông tin cơ bản của modem để hiển thị lên giao diện web.
+ *
+ * Bao gồm: tên modem, IMEI, chất lượng sóng CSQ và IP hiện tại (qua AT).
+ */
 String cellularStatusSummary() {
   String s;
   s += String("Modem: ") + modem.getModemName();
@@ -422,10 +464,11 @@ String cellularStatusSummary() {
   return s;
 }
 
-//=================================
-// cellularHttpGet()
-// For GET requests (firmware check, etc)
-//=================================
+/**
+ * @brief Gửi HTTP GET qua 4G để lấy dữ liệu (ví dụ kiểm tra firmware).
+ *
+ * Có cơ chế retry nhẹ tương tự POST mặc định để chống lỗi mạng tức thời.
+ */
 bool cellularHttpGet(const char* host, uint16_t port, const char* path, String& response) {
   if (cellularHttpMutex) xSemaphoreTake(cellularHttpMutex, portMAX_DELAY);
   // Đảm bảo client ở trạng thái sạch trước mỗi request
@@ -496,10 +539,11 @@ bool cellularHttpGet(const char* host, uint16_t port, const char* path, String& 
   return false;
 }
 
-//=================================
-// cellularOtaDownload()
-// Download firmware via 4G and write to flash using Update
-//=================================
+/**
+ * @brief Tải firmware .bin qua 4G và ghi trực tiếp vào flash thông qua lớp Update.
+ *
+ * Chú ý: hàm sẽ tự khởi động lại thiết bị nếu Update.end() thành công.
+ */
 bool cellularOtaDownload(const char* host, uint16_t port, const char* path) {
   if (cellularHttpMutex) xSemaphoreTake(cellularHttpMutex, portMAX_DELAY);
   gsmClient.stop();
@@ -584,7 +628,12 @@ bool cellularOtaDownload(const char* host, uint16_t port, const char* path) {
   return true;
 }
 
-// Triển khai HTTPS qua AT command (SIMCOM A7680C/SIM7600)
+/**
+ * @brief Thực thi HTTPS POST thông qua bộ lệnh AT +CHTTPS* (không dùng TinyGSM stack).
+ *
+ * Dành cho trường hợp cần TLS nhưng modem chưa hỗ trợ qua TinyGSM. Hàm sẽ cố gắng
+ * khởi tạo phiên, gửi header, truyền payload và đọc phản hồi tối đa 512 byte.
+ */
 bool cellularHttpPostAT(const char* host, uint16_t port, const char* path, const String& body, String& response) {
   // Đảm bảo stack ở trạng thái sạch và START với retry
   modem.sendAT("+CHTTPSSTOP"); modem.waitResponse(2000);

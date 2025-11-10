@@ -15,6 +15,17 @@
 #include <SPIFFS.h>
 #include <esp_task_wdt.h>
 
+/**
+ * @file main.cpp
+ * @brief Firmware chính cho thiết bị Battery Smart Sensor (ESP32).
+ *
+ * Chức năng chính:
+ * - Đọc dữ liệu nhiệt độ, khí, lửa và xử lý cảnh báo theo ngưỡng cấu hình.
+ * - Upload dữ liệu lên backend qua Wi-Fi hoặc modem 4G (TinyGSM).
+ * - Cung cấp giao diện web tại chỗ để theo dõi, cấu hình Wi-Fi và cập nhật firmware OTA.
+ * - Vận hành theo kiến trúc đa task (networkTask, uploadTask) để giữ giao diện luôn phản hồi.
+ */
+
 // Cấu hình WiFi
 const char* ssid = WIFI_SSID;
 const char* password = WIFI_PASSWORD;
@@ -132,20 +143,33 @@ void startMainAP();
 void handleFirmwareUploadData();
 void handleFirmwareUploadComplete();
 
-// Helper để điều khiển còi qua Relay hoặc trực tiếp
+/**
+ * @brief Bật còi cảnh báo thông qua relay (theo cấu hình active-high/low).
+ */
 void buzzerOn() {
   // Đơn giản hóa: ON = kích relay theo mức ACTIVE
   digitalWrite(RELAY_PIN, relayActiveLowRuntime ? LOW : HIGH);
   buzzerIsOn = true;
 }
 
+/**
+ * @brief Tắt còi cảnh báo thông qua relay.
+ */
 void buzzerOff() {
   // Đơn giản hóa: OFF = thả relay (mức INACTIVE)
   digitalWrite(RELAY_PIN, relayActiveLowRuntime ? HIGH : LOW);
   buzzerIsOn = false;
 }
 
-// Upload task chạy song song - không block web server
+/**
+ * @brief Task nền chuyên xử lý upload dữ liệu lên backend mà không chặn loop chính.
+ *
+ * Quy trình:
+ * - Chờ cờ `uploadPending` hoặc `urgentUploadPending`.
+ * - Sao chép payload dưới mutex để tránh race condition.
+ * - Ưu tiên 4G nếu hệ thống đang chạy ở mode 4G; fallback Wi-Fi khi có.
+ * - Gửi xong thì hạ cờ, tiếp tục vòng lặp.
+ */
 void uploadTask(void* param) {
   // 🔒 Disable watchdog cho uploadTask vì nó chạy HTTP operations
   esp_task_wdt_delete(NULL);
@@ -225,7 +249,11 @@ void uploadTask(void* param) {
   }
 }
 
-// 🆕 Firmware check task chạy song song - không block web server
+/**
+ * @brief Task nền để kiểm tra firmware mới mà không làm giật UI.
+ *
+ * Task chỉ chạy một lần rồi tự hủy (`vTaskDelete`) sau khi gọi `checkFirmwareUpdate()`.
+ */
 void firmwareCheckTask(void* param) {
   // ⚠️ Task này độc lập, không share với loopTask
   Serial.println("[FIRMWARE_TASK] Bắt đầu kiểm tra firmware trong background task...");
@@ -237,6 +265,13 @@ void firmwareCheckTask(void* param) {
   vTaskDelete(NULL); // Xóa task sau khi hoàn thành
 }
 
+/**
+ * @brief Hàm khởi tạo chính của ESP32.
+ *
+ * - Thiết lập Serial, watchdog, SPIFFS và GPIO.
+ * - Khởi động cảm biến, SoftAP, web server.
+ * - Tạo hai task nền: `networkTask` (khởi tạo kết nối) và `uploadTask`.
+ */
 void setup() {
   Serial.begin(SERIAL_BAUD_RATE);
   Serial.println("=== ESP32 CHIP INFO ===");
@@ -303,7 +338,11 @@ void setup() {
   Serial.println("🌐 Network initialization running in background...");
 }
 
-// Network Task chạy song song để khởi tạo mạng
+/**
+ * @brief Task nền chịu trách nhiệm thiết lập kết nối mạng khi khởi động thiết bị.
+ *
+ * Ưu tiên modem 4G; nếu thất bại sẽ giữ thiết bị ở chế độ AP-only để kỹ thuật viên can thiệp.
+ */
 void networkTask(void* param) {
   // 🔒 DISABLE WATCHDOG - networkTask chỉ chạy 1 lần khi startup
   // HTTP operations có thể mất thời gian, không cần watchdog check
@@ -362,6 +401,9 @@ void networkTask(void* param) {
   vTaskDelete(NULL); // Kết thúc task
 }
 
+/**
+ * @brief Vòng lặp chính: bảo trì AP, đọc cảm biến, xử lý HTTP và kiểm tra upload.
+ */
 void loop() {
   // Reset watchdog timer để tránh crash - reset thường xuyên hơn
   esp_task_wdt_reset();
@@ -449,6 +491,13 @@ void loop() {
   delay(100);
 }
 
+/**
+ * @brief Đọc toàn bộ cảm biến và cập nhật biến toàn cục.
+ *
+ * - DS18B20: lấy nhiệt độ theo °C.
+ * - MQ-135: đọc nhiều mẫu, áp dụng median filter + moving average để giảm nhiễu.
+ * - KY-026: đọc ADC 12-bit, chuyển về thang 10-bit (0..1023) cho backend.
+ */
 void readSensors() {
   // Đọc nhiệt độ từ DS18B20
   tempSensor.requestTemperatures();
@@ -500,6 +549,12 @@ void readSensors() {
   fireValue10 = fireMedian10;
 }
 
+/**
+ * @brief Xác định trạng thái cảnh báo dựa trên các ngưỡng cấu hình.
+ *
+ * Khi bất kỳ mô-đun nào vượt ngưỡng, bật còi/LED và lên lịch upload gấp.
+ * Đồng thời lưu lại cờ alert để gửi về backend.
+ */
 void checkAlerts() {
   bool tempAlert = (temperature > TEMP_THRESHOLD);
   bool smokeAlert = (smokeValue > SMOKE_THRESHOLD);
@@ -556,6 +611,11 @@ void checkAlerts() {
   }
 }
 
+/**
+ * @brief Kích hoạt còi/LED và in log chi tiết nguyên nhân cảnh báo.
+ *
+ * Hàm được giữ lại cho trường hợp muốn ép bật cảnh báo thủ công (debug).
+ */
 void activateAlerts() {
   // Bật LED và còi cảnh báo
   if (LED_PIN >= 0) digitalWrite(LED_PIN, HIGH);
@@ -578,12 +638,20 @@ void activateAlerts() {
   Serial.println("=========================");
 }
 
+/**
+ * @brief Tắt còi và LED cảnh báo, trả thiết bị về trạng thái yên lặng.
+ */
 void deactivateAlerts() {
   // Tắt LED và còi cảnh báo
   if (LED_PIN >= 0) digitalWrite(LED_PIN, LOW);
   buzzerOff();
 }
 
+/**
+ * @brief Khởi tạo logic kết nối mạng ở chế độ tuần tự (không dùng trong fast boot).
+ *
+ * Hiện firmware sử dụng networkTask chạy nền, hàm này giữ lại để tham khảo và debug.
+ */
 void startNetworking() {
   Serial.println("🌐 Bắt đầu kết nối mạng...");
 
@@ -627,6 +695,11 @@ void startNetworking() {
   Serial.println("📡 Bỏ qua WiFi fallback. Giữ AP quản trị hoạt động");
 }
 
+/**
+ * @brief Khởi động SoftAP quản trị và đăng ký các route phục vụ cấu hình tại chỗ.
+ *
+ * AP này luôn bật kể cả khi thiết bị tham gia Wi-Fi khác, giúp kỹ thuật viên truy cập.
+ */
 void startMainAP() {
   // AP chính hoạt động liên tục để quản trị
   // Luôn giữ AP bật, không bị ảnh hưởng bởi STA
@@ -659,6 +732,9 @@ void startMainAP() {
 }
 
 // Đảm bảo AP đang bật (khôi phục nếu bị tắt bởi driver)
+/**
+ * @brief Giữ cho AP quản trị luôn hoạt động, tránh trường hợp driver tắt khi không có client.
+ */
 void ensureAdminAP() {
   if (WiFi.getMode() != WIFI_AP_STA && WiFi.getMode() != WIFI_AP) {
     WiFi.mode(WIFI_AP_STA);
@@ -669,6 +745,9 @@ void ensureAdminAP() {
 }
 
 
+/**
+ * @brief Đăng ký toàn bộ endpoint cho giao diện web và API nội bộ của thiết bị.
+ */
 void startWebServer() {
   server.on("/", handleRoot);
   server.on("/api/status", HTTP_GET, handleApiStatus);
@@ -725,6 +804,11 @@ void startWebServer() {
   Serial.println(HTTP_SERVER_PORT);
 }
 
+/**
+ * @brief Sinh nội dung HTML cho bảng điều khiển quản trị của thiết bị.
+ *
+ * Trang hiển thị số liệu cảm biến, trạng thái kết nối, thông báo firmware và các hành động quản trị.
+ */
 String renderHtml() {
   String html = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
   html += "<title>Battery Monitor - Admin Panel</title><style>body{font-family:Arial;padding:16px} .card{border:1px solid #ddd;border-radius:8px;padding:12px;margin:8px 0} .ok{color:#2e7d32}.warn{color:#d32f2f} .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px} .network-status{padding:10px;border-radius:5px;margin:10px 0} .wifi-connected{background:#e8f5e8;border-left:4px solid #4caf50} .cellular-connected{background:#e3f2fd;border-left:4px solid #2196f3} .ap-mode{background:#fff3e0;border-left:4px solid #ff9800} .button{background:#2196f3;color:white;padding:8px 16px;border:none;border-radius:3px;cursor:pointer;margin:5px;text-decoration:none;display:inline-block} .firmware-notification{background:#ffebee;border:2px solid #f44336;border-radius:8px;padding:15px;margin:15px 0} .firmware-notification h3{color:#d32f2f;margin-top:0} .close-btn{float:right;background:#f44336;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer}</style></head><body>";
@@ -840,10 +924,16 @@ String renderHtml() {
   return html;
 }
 
+/**
+ * @brief Endpoint `/` - trả về trang HTML tổng quan.
+ */
 void handleRoot() {
   server.send(200, "text/html", renderHtml());
 }
 
+/**
+ * @brief Endpoint `/api/status` - trả về dữ liệu cảm biến dạng JSON phục vụ debug.
+ */
 void handleApiStatus() {
   String json;
   {
@@ -868,6 +958,9 @@ void handleApiStatus() {
   server.send(200, "application/json", json);
 }
 
+/**
+ * @brief Đặt lịch upload dữ liệu định kỳ (60 giây/lần) thông qua task upload.
+ */
 void tryBackendUpload() {
   // 🔒 CẤM UPLOAD TRƯỚC KHI NETWORK TASK HOÀN TẤT
   if (!networkTaskCompleted) {
@@ -903,6 +996,9 @@ void tryBackendUpload() {
   uploadPending = true; // Upload task sẽ xử lý này
 }
 
+/**
+ * @brief Đặt lịch upload ngay lập tức (không khẩn cấp) thông qua task upload.
+ */
 void uploadImmediate() {
   // ✅ USE ASYNC UPLOAD: Đặt flag để upload task xử lý ngay
   Serial.println("[UPLOAD] ⏳ Bắt đầu upload immediate...");
@@ -928,6 +1024,9 @@ void uploadImmediate() {
   uploadPending = true; // Bắt đầu upload (async via uploadTask)
 }
 
+/**
+ * @brief Đặt lịch upload khẩn, yêu cầu task upload dùng đường truyền timeout ngắn.
+ */
 void uploadImmediateCritical() {
   // Gửi khẩn: dùng path timeout ngắn, không retry
   Serial.println("[UPLOAD][URGENT] ⏳ Bắt đầu upload immediate (CRITICAL)...");
@@ -949,6 +1048,9 @@ void uploadImmediateCritical() {
   urgentUploadPending = true;
 }
 
+/**
+ * @brief Quy trình kiểm tra nhanh các cảm biến và phần cứng cảnh báo (dành cho kỹ thuật viên).
+ */
 void testSensors() {
   Serial.println("🔍 Kiểm tra cảm biến nhiệt độ DS18B20...");
   tempSensor.begin();
@@ -995,7 +1097,9 @@ void testSensors() {
   Serial.println("=== KẾT THÚC TEST ===");
 }
 
-// Hàm median filter để loại bỏ nhiễu
+/**
+ * @brief Bộ lọc median đơn giản để loại bỏ nhiễu trong chuỗi mẫu analog.
+ */
 int medianFilter(int values[], int size) {
   // Sắp xếp mảng
   for (int i = 0; i < size - 1; i++) {
@@ -1011,7 +1115,9 @@ int medianFilter(int values[], int size) {
   return values[size / 2];
 }
 
-// Hàm moving average để làm mượt dữ liệu
+/**
+ * @brief Tính trung bình trượt cho MQ-135 để làm mượt giá trị đo cuối cùng.
+ */
 int movingAverage(int newValue) {
   smokeHistory[smokeHistoryIndex] = newValue;
   smokeHistoryIndex = (smokeHistoryIndex + 1) % MOVING_AVERAGE_SIZE;
@@ -1023,22 +1129,36 @@ int movingAverage(int newValue) {
   return (int)(sum / MOVING_AVERAGE_SIZE);
 }
 
+/**
+ * @brief (Không dùng) Giữ placeholder đồng bộ NTP – backend phụ trách timestamp.
+ */
 void syncNTP() {
   // NTP disabled - backend provides timestamp
   Serial.println("[NTP] Disabled - backend handles time");
 }
 
+/**
+ * @brief Trả về timestamp hiện tại nếu dùng NTP (hiện trả 0 vì server tự chèn thời gian).
+ */
 unsigned long getCurrentTimestamp() {
   // Backend handles timestamps; return 0 to indicate unused
   return 0;
 }
 
+/**
+ * @brief Buộc đồng bộ NTP (đã vô hiệu hóa vì backend quản lý thời gian).
+ */
 void forceSyncNTP() {
   // NTP disabled - backend provides timestamp
   Serial.println("[NTP] Disabled - backend handles time");
 }
 
 // WiFi Setup Functions
+/**
+ * @brief Endpoint `/wifi-scan` - quét mạng Wi-Fi xung quanh và hiển thị cho kỹ thuật viên.
+ *
+ * Có cơ chế debounce để tránh spam scan khi người dùng reload liên tục.
+ */
 void handleWiFiScan() {
   // Debounce and single-scan guard
   unsigned long now = millis();
@@ -1139,6 +1259,11 @@ void handleWiFiScan() {
   wifiScanInProgress = false;
 }
 
+/**
+ * @brief Endpoint `/wifi-connect` - nhận SSID/password và thử kết nối Wi-Fi STA.
+ *
+ * Kết quả thành công sẽ được lưu vào SPIFFS để các lần sau tự động dùng lại.
+ */
 void handleWiFiConnect() {
   if (server.hasArg("ssid") && server.hasArg("password")) {
     String ssid = server.arg("ssid");
@@ -1195,6 +1320,9 @@ void handleWiFiConnect() {
   }
 }
 
+/**
+ * @brief Endpoint `/wifi-reset` - xóa cấu hình Wi-Fi đã lưu và khởi động lại thiết bị.
+ */
 void handleWiFiReset() {
   Serial.println("🔄 Reset WiFi config...");
 
@@ -1214,6 +1342,9 @@ void handleWiFiReset() {
   ESP.restart();
 }
 
+/**
+ * @brief Lưu thông tin Wi-Fi xuống SPIFFS dưới dạng JSON để khôi phục sau này.
+ */
 void saveWiFiConfig(String ssid, String password) {
   // Khởi tạo SPIFFS nếu chưa có
   if (!SPIFFS.begin(true)) {
@@ -1238,6 +1369,9 @@ void saveWiFiConfig(String ssid, String password) {
 
 // WiFi saved-config helpers removed to enforce WiFi on-demand only
 
+/**
+ * @brief Endpoint `/api/firmware/update-wifi` - thực hiện OTA qua Wi-Fi khi firmware mới sẵn sàng.
+ */
 void handleFirmwareUpdateWiFi() {
   Serial.println("🔄 Bắt đầu cập nhật firmware qua WiFi...");
 
@@ -1266,12 +1400,17 @@ void handleFirmwareUpdateWiFi() {
   }
 }
 
+/**
+ * @brief Endpoint `/api/firmware/update-4g` - đã vô hiệu hóa theo chính sách (trả về lỗi).
+ */
 void handleFirmwareUpdate4G() {
   // 4G OTA bị vô hiệu hóa theo yêu cầu: chỉ cho phép kiểm tra qua 4G, update qua WiFi
   server.send(400, "application/json", "{\"error\":\"4G OTA disabled. Please use WiFi.\"}");
 }
 
-// Hàm kiểm tra firmware update từ web interface
+/**
+ * @brief Endpoint `/api/firmware/check` - kiểm tra trạng thái firmware (sync hoặc async).
+ */
 void handleFirmwareCheck() {
   Serial.println("🔍 Kiểm tra firmware update từ web interface...");
 

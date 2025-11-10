@@ -8,6 +8,11 @@
 #include "config.h"
 #include "cellular.h"
 
+/**
+ * @file firmware_update.cpp
+ * @brief Thực thi toàn bộ luồng OTA: kiểm tra phiên bản, thông báo, tải và cập nhật firmware.
+ */
+
 extern WebServer server;
 extern bool firmwareUpdateAvailable;
 extern String latestFirmwareVersion;
@@ -25,6 +30,15 @@ extern int currentConnectionMode;
 void startFirmwareNotificationAP();
 void handleFirmwareWebInterface();
 
+/**
+ * @brief Liên hệ backend để kiểm tra firmware mới.
+ *
+ * Thứ tự ưu tiên:
+ * 1. Nếu có Wi-Fi đang kết nối → kiểm tra qua Wi-Fi trước (ổn định, tiết kiệm data).
+ * 2. Nếu thất bại và cho phép 4G → fallback sang modem 4G.
+ *
+ * Mọi bước đều reset watchdog để tránh WDT khi HTTP mất thời gian.
+ */
 void checkFirmwareUpdate() {
   // Chỉ kiểm tra firmware update nếu đã có kết nối internet
   if (WiFi.status() != WL_CONNECTED && currentConnectionMode != CONNECTION_4G_FIRST) {
@@ -160,6 +174,11 @@ void checkFirmwareUpdate() {
   #endif
 }
 
+/**
+ * @brief Gửi thông điệp tới kỹ thuật viên rằng có firmware mới.
+ *
+ * Hiện tại chỉ dùng AP chính (SoftAP) nên không cần mở AP phụ; chủ yếu là log hướng dẫn.
+ */
 void startFirmwareNotificationAP() {
   if (firmwareNotificationAPActive) return;
   
@@ -174,6 +193,9 @@ void startFirmwareNotificationAP() {
   Serial.println("🌐 Truy cập: http://192.168.4.1 để cập nhật");
 }
 
+/**
+ * @brief Tắt thông báo firmware, dùng khi OTA thành công hoặc hoạt động bảo trì hoàn tất.
+ */
 void stopFirmwareNotificationAP() {
   if (!firmwareNotificationAPActive) return;
   
@@ -182,6 +204,11 @@ void stopFirmwareNotificationAP() {
   Serial.println("📡 Đã tắt WiFi AP thông báo firmware");
 }
 
+/**
+ * @brief Thực hiện quy trình tải và ghi firmware qua Wi-Fi.
+ *
+ * Hàm trả về false nếu bất kỳ bước nào thất bại để caller chủ động hiển thị lỗi.
+ */
 bool performOTAUpdate(String url, String method) {
   Serial.println("🔄 Bắt đầu OTA update từ: " + url);
   
@@ -255,6 +282,12 @@ bool performOTAUpdate(String url, String method) {
   }
 }
 
+/**
+ * @brief Render giao diện HTML phục vụ cập nhật firmware trên web server nội bộ.
+ *
+ * Trang này hiển thị phiên bản hiện tại, phiên bản mới và cung cấp nút cập nhật.
+ * Các phần liên quan tới 4G đã bị gỡ theo yêu cầu triển khai thực tế.
+ */
 void handleFirmwareWebInterface() {
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset=\"utf-8\">";

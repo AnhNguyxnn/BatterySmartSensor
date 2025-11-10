@@ -1,101 +1,126 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// Cấu hình WiFi
+/**
+ * @file config.h
+ * @brief Tập trung mọi hằng số cấu hình cho firmware ESP32 (mạng, cảm biến, cảnh báo, OTA).
+ *
+ * Việc gom nhóm cấu hình vào một nơi giúp:
+ * - Dễ kiểm soát thay đổi khi triển khai tại hiện trường.
+ * - Tránh sửa trực tiếp trong mã nguồn nghiệp vụ.
+ * - Ghi chú rõ ràng bằng tiếng Việt để đội vận hành hiểu nhanh.
+ */
+
+// --------------------------------------------------------------------
+// CẤU HÌNH WI-FI VÀ SOFT AP QUẢN TRỊ
+// --------------------------------------------------------------------
 #define WIFI_SSID "AnhNguyen"
 #define WIFI_PASSWORD "AnhNguyennn"
 
-// Cấu hình SoftAP chính (hoạt động liên tục để quản trị)
+// AP chạy thường trực để kỹ thuật viên truy cập cấu hình khi ra hiện trường
 #define AP_SSID "BatteryMonitor-Admin"
 #define AP_PASSWORD "admin123"
 
-// Timeout kết nối WiFi STA (ms)
+// Thời gian chờ ESP32 kết nối vào STA (ms) trước khi từ bỏ
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 
-// Cấu hình HTTP Server nội bộ
+// Cổng HTTP cho web UI quản trị nội bộ
 #define HTTP_SERVER_PORT 80
 
-// Cấu hình Cellular (SIMCOM A7680C / SIM7600 tương thích TinyGSM)
-#define CELL_APN "m3-world"           // thay theo SIM
-#define CELL_USER "mms"                  // nếu cần
-#define CELL_PASS "mms"                  // nếu cần
+// --------------------------------------------------------------------
+// CẤU HÌNH KẾT NỐI CELLULAR (SIMCOM A7680C / SIM7600)
+// --------------------------------------------------------------------
+#define CELL_APN "m3-world"   // Tùy SIM - cần đổi tương ứng nhà mạng
+#define CELL_USER "mms"       // Bỏ trống nếu nhà mạng không yêu cầu
+#define CELL_PASS "mms"
 
-// Buộc LTE-only (không 2G/3G). 1: chỉ LTE, 0: tự động
+// 1 = ép chạy LTE-only để ổn định; 0 = để modem tự chọn (khi sóng LTE yếu)
 #define CELL_FORCE_LTE_ONLY 1
 
-// UART kết nối module (chọn Serial1 hoặc Serial2 phụ thuộc wiring)
+// UART phần cứng kết nối module 4G
 #define CELL_UART Serial2
 #define CELL_BAUD 115200
 #define CELL_TX_PIN 26
 #define CELL_RX_PIN 27
 
-// PWRKEY chân điều khiển bật module nếu dùng
+// PWRKEY điều khiển nguồn cho modem; cần giữ mức kích đủ lâu
 #define CELL_PWRKEY_PIN 4
 #define CELL_PWRKEY_ACTIVE_MS 1500
-// SIMCOM (SIM7600/A7680C) thường dùng PWRKEY active-LOW
-#define CELL_PWRKEY_ACTIVE_LOW 1
+#define CELL_PWRKEY_ACTIVE_LOW 1  // SIMCOM thường là active-LOW
 
-// Backend server (dùng cho upload qua 4G)
+// --------------------------------------------------------------------
+// CẤU HÌNH BACKEND (Upload qua Wi-Fi hoặc 4G)
+// --------------------------------------------------------------------
 #define ENABLE_CELLULAR_UPLOAD 1
-#define BACKEND_HOST "cloud.anhnguyxn.io.vn"   // DNS only → HTTP
+#define BACKEND_HOST "cloud.anhnguyxn.io.vn"   // Backend FastAPI
 #define BACKEND_PORT 8000
 #define BACKEND_PATH "/api/ingest"
-#define APPLICATION_KEY "battery_monitor_2025_secure_key"  // API key để xác thực
+#define APPLICATION_KEY "battery_monitor_2025_secure_key"  // API key xác thực
 
-// Cấu hình GPIO Pins
-#define TEMP_SENSOR_PIN 23        // DS18B20
-#define SMOKE_SENSOR_PIN 35      // MQ-135 (Analog) → ESP32 ADC1 GPIO36 (VP). Tránh ADC2 khi dùng WiFi
-#define FIRE_SENSOR_ANALOG_PIN 34 // KY-026 Flame (Analog AO) → ESP32 ADC1 GPIO34
-// Nếu dùng ngõ ra Digital của module (không khuyến nghị), bật pull-up theo wiring
-#define FIRE_INPUT_PULLUP 0      // Không dùng digital cho KY-026; để 0
-#define LED_PIN -1               // LED cảnh báo (đặt -1 để vô hiệu hóa)
+// --------------------------------------------------------------------
+// CHÂN CẢM BIẾN VÀ NGOẠI VI
+// --------------------------------------------------------------------
+#define TEMP_SENSOR_PIN 23         // DS18B20 (1-Wire)
+#define SMOKE_SENSOR_PIN 35        // MQ-135 → ESP32 ADC1 (tránh ADC2 khi bật Wi-Fi)
+#define FIRE_SENSOR_ANALOG_PIN 34  // KY-026 analog AO → ESP32 ADC1
 
-// Còi bắt buộc điều khiển qua relay (không hỗ trợ cắm trực tiếp buzzer)
-#define RELAY_PIN 0               // Chân điều khiển Relay (IN) → GPIO18 (ổn định, không strap nguy hiểm)
-#define RELAY_ACTIVE_LOW 1         // 1: Relay active-LOW (phổ biến), 0: active-HIGH
+// Nếu có dùng chân digital của KY-026 thì bật pull-up tương ứng (mặc định không dùng)
+#define FIRE_INPUT_PULLUP 0
 
+// LED cảnh báo: để -1 nếu không sử dụng đèn báo
+#define LED_PIN -1
 
-// Âm báo khi thiết bị hoàn tất setup mạng
-#define STARTUP_CHIME_ENABLED 1     // 1: Bật âm báo khởi động sau khi setup mạng xong
+// Điều khiển còi thông qua relay trung gian để bảo vệ ESP32
+#define RELAY_PIN 0
+#define RELAY_ACTIVE_LOW 1  // 1 = relay kích ở mức LOW (thường gặp), 0 = kích HIGH
 
+// Âm báo sau khi thiết bị hoàn tất khởi tạo mạng
+#define STARTUP_CHIME_ENABLED 1
 
-// Ngưỡng cảnh báo (theo thứ tự ưu tiên)
-#define TEMP_THRESHOLD 90.0      // Nhiệt độ nguy hiểm (°C) - ƯU TIÊN CAO NHẤT
-#define SMOKE_THRESHOLD 2000      // Ngưỡng khí MQ-135 (0-4095, 12-bit ADC) - ƯU TIÊN TRUNG BÌNH
-#define FIRE_ANALOG_THRESHOLD 375  // KY-026 10-bit (0-1023). Cảnh báo khi fire_value < ngưỡng
+// --------------------------------------------------------------------
+// NGƯỠNG CẢNH BÁO AN TOÀN PIN
+// --------------------------------------------------------------------
+#define TEMP_THRESHOLD 90.0          // °C: Quá nhiệt → ưu tiên cao nhất
+#define SMOKE_THRESHOLD 2000         // Giá trị ADC MQ-135 (0-4095)
+#define FIRE_ANALOG_THRESHOLD 375    // KY-026 ADC (0-1023): nhỏ hơn ngưỡng = có lửa
 
-// Ngưỡng phụ cho logic phức tạp
-#define TEMP_SMOKE_THRESHOLD_MULTIPLIER 0.8  // 80% của TEMP_THRESHOLD cho MQ-135 + Temp
+// Ngưỡng phụ: nếu nhiệt độ cao, hạ ngưỡng MQ-135 xuống 80% để phát hiện sớm
+#define TEMP_SMOKE_THRESHOLD_MULTIPLIER 0.8
 
+// --------------------------------------------------------------------
+// TẦN SUẤT ĐỌC/GỬI DỮ LIỆU
+// --------------------------------------------------------------------
+#define SENSOR_INTERVAL 1000      // ms: đọc cảm biến mỗi 1 giây
+#define DATA_SEND_INTERVAL 3000   // ms: tối thiểu 3 giây mới gửi server một lần
 
-
-// Cấu hình thời gian
-#define SENSOR_INTERVAL 1000     // Đọc cảm biến mỗi 1 giây
-#define DATA_SEND_INTERVAL 3000 // Gửi dữ liệu mỗi 30 giây
-
-// Cấu hình thiết bị
+// --------------------------------------------------------------------
 #define DEVICE_ID "battery_monitor_001"
 #define SERIAL_BAUD_RATE 115200
 
-// Firmware version info
+// --------------------------------------------------------------------
+// THÔNG SỐ PHIÊN BẢN FIRMWARE
+// --------------------------------------------------------------------
 #define FIRMWARE_VERSION "1.0.0"
 #define FIRMWARE_BUILD 7
 
-// Firmware update settings
-#define FIRMWARE_CHECK_INTERVAL 43200000  // 12 giờ (43200000ms)
-#define FIRMWARE_UPDATE_TIMEOUT 300000    // 5 phút timeout
+// Cấu hình OTA
+#define FIRMWARE_CHECK_INTERVAL 43200000  // 12 giờ (ms)
+#define FIRMWARE_UPDATE_TIMEOUT 300000    // 5 phút
 #define FIRMWARE_NOTIFICATION_AP_SSID "FirmwareUpdate-v" FIRMWARE_VERSION
 #define FIRMWARE_NOTIFICATION_AP_PASSWORD "update123"
 
-// Cấu hình ADC cho MQ-135
-#define ADC_SAMPLES 16           // số mẫu đọc để lấy trung bình
-#define SMOKE_FLOAT_RANGE 800    // nếu (max-min) > ngưỡng này coi như chân đang trôi (sensor chưa cắm)
-#define MEDIAN_FILTER_SIZE 5     // kích thước median filter
-#define MOVING_AVERAGE_SIZE 10   // kích thước moving average filter
+// --------------------------------------------------------------------
+// XỬ LÝ NHIỄU ADC (MQ-135)
+// --------------------------------------------------------------------
+#define ADC_SAMPLES 16           // Lấy trung bình 16 mẫu cho mỗi lần đọc
+#define SMOKE_FLOAT_RANGE 800    // Nếu biên độ dao động lớn → cảnh báo cảm biến lỏng
+#define MEDIAN_FILTER_SIZE 5     // Bộ lọc trung vị để bỏ outlier
+#define MOVING_AVERAGE_SIZE 10   // Trung bình trượt để làm mượt giá trị cuối
 
-
-// Cấu hình Fast Setup
-#define FAST_SETUP_MODE 1           // 1: Bật fast setup, 0: Tắt (debug mode)
-// #define DEBUG_SENSORS              // Uncomment để bật debug sensors
+// --------------------------------------------------------------------
+// CHẾ ĐỘ KHỞI ĐỘNG NHANH
+// --------------------------------------------------------------------
+#define FAST_SETUP_MODE 1        // 1 = boot tối giản, 0 = bật thêm debug
+// #define DEBUG_SENSORS         // Bật để in log cảm biến chi tiết
 
 #endif
