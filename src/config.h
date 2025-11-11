@@ -81,7 +81,7 @@
 // NGƯỠNG CẢNH BÁO AN TOÀN PIN
 // --------------------------------------------------------------------
 #define TEMP_THRESHOLD 90.0          // °C: Quá nhiệt → ưu tiên cao nhất
-#define SMOKE_THRESHOLD 2000         // Giá trị ADC MQ-135 (0-4095)
+#define SMOKE_THRESHOLD 1500         // Giá trị ADC MQ-135 (0-4095)
 #define FIRE_ANALOG_THRESHOLD 375    // KY-026 ADC (0-1023): nhỏ hơn ngưỡng = có lửa
 
 // Ngưỡng phụ: nếu nhiệt độ cao, hạ ngưỡng MQ-135 xuống 80% để phát hiện sớm
@@ -101,7 +101,7 @@
 // THÔNG SỐ PHIÊN BẢN FIRMWARE
 // --------------------------------------------------------------------
 #define FIRMWARE_VERSION "1.0.1"
-#define FIRMWARE_BUILD 1
+#define FIRMWARE_BUILD 3
 
 // Cấu hình OTA
 #define FIRMWARE_CHECK_INTERVAL 43200000  // 12 giờ (ms)

@@ -122,9 +122,6 @@ bool cellularBegin() {
     Serial.println("[CELL] ✅ Đã kết nối - reuse connection");
     return true;
   }
-
-  unsigned long startTime = millis();
-  const unsigned long timeout = 15000;
   
   // ===== PHASE 1: Initialize Modem (only if needed) =====
   if (!isModemReady) {
@@ -460,6 +457,17 @@ bool cellularHttpPostWithOptions(const char* host, uint16_t port, const char* pa
                                  const String& body, String& response,
                                  uint16_t timeoutMs, int attempts, uint16_t backoffMs) {
   if (cellularHttpMutex) xSemaphoreTake(cellularHttpMutex, portMAX_DELAY);
+  
+  // Kiểm tra và đảm bảo kết nối trước khi gửi
+  if (!ensureCellularConnection()) {
+    Serial.println("[CELL] Đang reconnect...");
+    if (!cellularBegin()) {
+      Serial.println("[CELL] ❌ Reconnect thất bại");
+      if (cellularHttpMutex) xSemaphoreGive(cellularHttpMutex);
+      return false;
+    }
+  }
+  
   gsmClient.stop();
   Serial.print("[CELL] HTTP POST(opt) to "); Serial.print(host); Serial.print(":"); Serial.println(port);
   esp_task_wdt_reset();
@@ -495,17 +503,33 @@ bool cellularHttpPostWithOptions(const char* host, uint16_t port, const char* pa
       return true;
     }
 
-    Serial.print("[CELL] HTTP "); Serial.println(statusCode);
+    Serial.printf("[CELL] HTTP POST(opt) lỗi (code: %d), attempt %d/%d\n", statusCode, attempt, attempts);
     http.stop();
     if (attempt < attempts && (statusCode == -3 || statusCode == -2 || statusCode == -1 || statusCode == 400)) {
       isDataConnected = false;
       modem.sendAT("+NETCLOSE");
-      modem.waitResponse(500);
-      if (backoffMs > 0) {
-        unsigned long t0 = millis();
-        while (millis() - t0 < backoffMs) {
-          delay(50);
+      modem.waitResponse(2000);  // Tăng timeout để cleanup tốt hơn
+      
+      // Exponential backoff hoặc dùng backoffMs nếu được cung cấp
+      unsigned long actualBackoff = backoffMs > 0 ? backoffMs : (1000 * (1 << (attempt - 1)));
+      Serial.printf("[CELL] Chờ %lu ms trước khi retry...\n", actualBackoff);
+      unsigned long t0 = millis();
+      while (millis() - t0 < actualBackoff) {
+        delay(50);
+        esp_task_wdt_reset();
+      }
+      
+      // Thử reconnect nếu không phải attempt cuối
+      if (attempt < attempts) {
+        Serial.println("[CELL] Thử reconnect trước khi retry...");
+        if (cellularBegin()) {
+          Serial.println("[CELL] ✅ Reconnect thành công, retry request...");
+          gsmClient.stop();
+          http = HttpClient(gsmClient, host, port);
+          http.setTimeout(timeoutMs);
           esp_task_wdt_reset();
+        } else {
+          Serial.println("[CELL] ⚠️ Reconnect thất bại, vẫn retry...");
         }
       }
       continue;
@@ -653,6 +677,17 @@ bool cellularHttpGet(const char* host, uint16_t port, const char* path, String& 
  */
 bool cellularOtaDownload(const char* host, uint16_t port, const char* path) {
   if (cellularHttpMutex) xSemaphoreTake(cellularHttpMutex, portMAX_DELAY);
+  
+  // Kiểm tra và đảm bảo kết nối trước khi tải firmware
+  if (!ensureCellularConnection()) {
+    Serial.println("[CELL][OTA] Đang reconnect...");
+    if (!cellularBegin()) {
+      Serial.println("[CELL][OTA] ❌ Reconnect thất bại");
+      if (cellularHttpMutex) xSemaphoreGive(cellularHttpMutex);
+      return false;
+    }
+  }
+  
   gsmClient.stop();
   esp_task_wdt_reset();
 
@@ -740,8 +775,20 @@ bool cellularOtaDownload(const char* host, uint16_t port, const char* path) {
  *
  * Dành cho trường hợp cần TLS nhưng modem chưa hỗ trợ qua TinyGSM. Hàm sẽ cố gắng
  * khởi tạo phiên, gửi header, truyền payload và đọc phản hồi tối đa 512 byte.
+ * 
+ * Lưu ý: Hàm này không dùng mutex vì dùng AT commands trực tiếp, nhưng nên gọi
+ * khi không có HTTP request khác đang chạy để tránh conflict.
  */
 bool cellularHttpPostAT(const char* host, uint16_t port, const char* path, const String& body, String& response) {
+  // Kiểm tra modem đã sẵn sàng chưa
+  if (!isModemReady) {
+    Serial.println("[CELL][AT] Modem chưa sẵn sàng, khởi tạo...");
+    if (!cellularBegin()) {
+      Serial.println("[CELL][AT] ❌ Không thể khởi tạo modem");
+      return false;
+    }
+  }
+  
   // Đảm bảo stack ở trạng thái sạch và START với retry
   modem.sendAT("+CHTTPSSTOP"); modem.waitResponse(2000);
   esp_task_wdt_reset(); // Reset watchdog during HTTPS setup
