@@ -98,15 +98,15 @@ void checkFirmwareUpdate() {
         latestFirmwareDisplayVersion = displayVersion;
         esp_task_wdt_reset(); // Reset after version formatting
         
-        Serial.println("🔄 Có firmware mới: " + displayVersion);
-        Serial.println("📥 URL: " + latestFirmwareUrl);
+        Serial.println(" Có firmware mới: " + displayVersion);
+        Serial.println(" URL: " + latestFirmwareUrl);
         
         // Tạo AP thông báo firmware update
         startFirmwareNotificationAP();
         success = true;
         lastFirmwareCheckSuccess = true;
       } else {
-        Serial.println("✅ Firmware đã cập nhật mới nhất");
+        Serial.println(" Firmware đã cập nhật mới nhất");
         success = true;
         lastFirmwareCheckSuccess = true;
       }
@@ -154,11 +154,11 @@ void checkFirmwareUpdate() {
           latestFirmwareDisplayVersion = displayVersion;
           esp_task_wdt_reset(); // Reset after version formatting
           
-          Serial.println("🔄 Có firmware mới (4G): " + displayVersion);
-          Serial.println("📥 URL: " + latestFirmwareUrl);
+          Serial.println(" Có firmware mới (4G): " + displayVersion);
+          Serial.println(" URL: " + latestFirmwareUrl);
           startFirmwareNotificationAP();
         } else {
-          Serial.println("✅ Firmware đã cập nhật mới nhất (4G)");
+          Serial.println(" Firmware đã cập nhật mới nhất (4G)");
           lastFirmwareCheckSuccess = true;
         }
       } else {
@@ -182,15 +182,15 @@ void checkFirmwareUpdate() {
 void startFirmwareNotificationAP() {
   if (firmwareNotificationAPActive) return;
   
-  Serial.println("📡 Có firmware mới - thông báo qua AP chính...");
+  Serial.println(" Có firmware mới - thông báo qua AP chính...");
   
   // Không tạo AP riêng, chỉ thông báo qua AP chính
   firmwareNotificationAPActive = true;
   
-  Serial.println("🔄 Có firmware mới: " + latestFirmwareVersion);
-  Serial.println("📥 URL: " + latestFirmwareUrl);
-  Serial.println("📱 Để cập nhật firmware, kết nối AP chính: " + String(AP_SSID));
-  Serial.println("🌐 Truy cập: http://192.168.4.1 để cập nhật");
+  Serial.println(" Có firmware mới: " + latestFirmwareVersion);
+  Serial.println(" URL: " + latestFirmwareUrl);
+  Serial.println(" Để cập nhật firmware, kết nối AP chính: " + String(AP_SSID));
+  Serial.println(" Truy cập: http://192.168.4.1 để cập nhật");
 }
 
 /**
@@ -201,7 +201,7 @@ void stopFirmwareNotificationAP() {
   
   WiFi.softAPdisconnect(true);
   firmwareNotificationAPActive = false;
-  Serial.println("📡 Đã tắt WiFi AP thông báo firmware");
+  Serial.println(" Đã tắt WiFi AP thông báo firmware");
 }
 
 /**
@@ -210,7 +210,7 @@ void stopFirmwareNotificationAP() {
  * Hàm trả về false nếu bất kỳ bước nào thất bại để caller chủ động hiển thị lỗi.
  */
 bool performOTAUpdate(String url, String method) {
-  Serial.println("🔄 Bắt đầu OTA update từ: " + url);
+  Serial.println(" Bắt đầu OTA update từ: " + url);
   
   // 4G OTA bị vô hiệu hóa: luôn dùng WiFi path
   
@@ -220,18 +220,18 @@ bool performOTAUpdate(String url, String method) {
   
   int httpCode = http.GET();
   if (httpCode != 200) {
-    Serial.println("❌ Lỗi tải firmware: " + String(httpCode));
+    Serial.println(" Lỗi tải firmware: " + String(httpCode));
     return false;
   }
   
   int contentLength = http.getSize();
   if (contentLength <= 0) {
-    Serial.println("❌ Không thể xác định kích thước file");
+    Serial.println(" Không thể xác định kích thước file");
     return false;
   }
   
   if (!Update.begin(contentLength)) {
-    Serial.println("❌ Không thể bắt đầu update");
+    Serial.println(" Không thể bắt đầu update");
     return false;
   }
   
@@ -247,7 +247,7 @@ bool performOTAUpdate(String url, String method) {
     if (size) {
       int c = client->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
       if (Update.write(buff, c) != c) {
-        Serial.println("❌ Lỗi ghi firmware");
+        Serial.println(" Lỗi ghi firmware");
         return false;
       }
       totalBytes += c;
@@ -271,13 +271,13 @@ bool performOTAUpdate(String url, String method) {
   esp_task_wdt_reset(); // Reset before finishing
   
   if (Update.end()) {
-    Serial.println("\n✅ Update thành công! Khởi động lại...");
+    Serial.println("\n Update thành công! Khởi động lại...");
     esp_task_wdt_reset(); // Reset one more time before reboot
     delay(1000);
     ESP.restart();
     return true;
   } else {
-    Serial.println("\n❌ Update thất bại");
+    Serial.println("\n Update thất bại");
     return false;
   }
 }
@@ -341,13 +341,13 @@ void handleFirmwareWebInterface() {
   #endif
   
   html += "<div class=\"method\">";
-  html += "<h3>📶 Cập nhật qua WiFi</h3>";
+  html += "<h3> Cập nhật qua WiFi</h3>";
   if (wifiConnected) {
-    html += "<p>✅ WiFi đã kết nối: " + WiFi.SSID() + "</p>";
+    html += "<p> WiFi đã kết nối: " + WiFi.SSID() + "</p>";
     html += "<button class=\"button wifi\" onclick=\"updateViaWiFi()\">Cập nhật qua WiFi</button>";
   } else {
-    html += "<p>❌ WiFi chưa kết nối.</p>";
-    html += "<a class=\"button wifi\" href=\"/wifi-scan\">🔍 WiFi Setup</a>";
+    html += "<p> WiFi chưa kết nối.</p>";
+    html += "<a class=\"button wifi\" href=\"/wifi-scan\"> WiFi Setup</a>";
     html += "<div id=\"wifiStatus\"></div>";
   }
   html += "</div>";

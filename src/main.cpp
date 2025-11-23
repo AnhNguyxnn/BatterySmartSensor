@@ -69,7 +69,7 @@ bool firmwareNotificationAPActive = false;
 // Trạng thái lần kiểm tra firmware gần nhất (để tránh báo sai khi offline)
 volatile bool lastFirmwareCheckSuccess = false;
 String lastFirmwareCheckError = "";
-// 🆕 Concurrency guard & rate limiting for firmware check
+  // Concurrency guard & rate limiting for firmware check
 volatile bool firmwareCheckInProgress = false;
 unsigned long lastFirmwareCheckRequestAt = 0;
 const unsigned long FIRMWARE_CHECK_MIN_INTERVAL_MS = 30000; // 30s debounce
@@ -82,7 +82,7 @@ enum ConnectionMode {
 };
 ConnectionMode currentConnectionMode = CONNECTION_NONE;
 bool connectionEstablished = false;
-bool networkTaskCompleted = false;  // 🔒 CẤM UPLOAD TRƯỚC KHI NETWORK TASK XONG
+bool networkTaskCompleted = false;  // CẤM UPLOAD TRƯỚC KHI NETWORK TASK XONG
 
 // Debounce WiFi scan to avoid spam
 static volatile bool wifiScanInProgress = false;
@@ -92,7 +92,7 @@ static unsigned long wifiScanLastStartMs = 0;
 static bool uploadPending = false;
 static bool urgentUploadPending = false;
 static String uploadBody;
-static SemaphoreHandle_t uploadMutex = NULL;  // 🔒 Thread-safe protection
+static SemaphoreHandle_t uploadMutex = NULL;  // Thread-safe protection
 
 // Chime khởi động sau khi setup mạng
 #if STARTUP_CHIME_ENABLED
@@ -171,51 +171,60 @@ void buzzerOff() {
  * - Gửi xong thì hạ cờ, tiếp tục vòng lặp.
  */
 void uploadTask(void* param) {
-  // 🔒 Disable watchdog cho uploadTask vì nó chạy HTTP operations
+  // Disable watchdog cho uploadTask vì nó chạy HTTP operations
   esp_task_wdt_delete(NULL);
 
   Serial.println("[UPLOAD] Task khởi động...");
 
   while (true) {
-    if (urgentUploadPending || uploadPending) {
+    // ƯU TIÊN URGENT: Kiểm tra urgent trước, nếu có thì bỏ qua upload thường
+    bool isUrgent = urgentUploadPending;
+    bool isNormal = uploadPending && !urgentUploadPending; // Chỉ upload thường nếu không có urgent
+    
+    if (isUrgent || isNormal) {
       if (!networkTaskCompleted) {
         // Chưa sẵn sàng mạng, đợi lần sau
         delay(500);
         continue;
       }
-      if (urgentUploadPending) {
-        Serial.println("[UPLOAD] ⏳ Bắt đầu upload (URGENT)...");
+      
+      if (isUrgent) {
+        Serial.println("[UPLOAD] Bắt đầu upload (URGENT - CẢNH BÁO)...");
       } else {
-        Serial.println("[UPLOAD] ⏳ Bắt đầu upload...");
+        Serial.println("[UPLOAD] Bắt đầu upload...");
       }
 
-      // Copy uploadBody với mutex protection
+      // Copy uploadBody với mutex protection - copy ngay trước khi gửi để lấy dữ liệu mới nhất
       String localBody;
+      bool wasUrgent = false;
       if (xSemaphoreTake(uploadMutex, portMAX_DELAY)) {
         localBody = uploadBody;  // Safe copy
+        wasUrgent = urgentUploadPending; // Lưu trạng thái urgent tại thời điểm copy
         xSemaphoreGive(uploadMutex);
       }
 
       Serial.println("[UPLOAD] Data size: " + String(localBody.length()) + " bytes");
 
       // Upload từ từ mà không block main loop
+      bool uploadSuccess = false;
       if (currentConnectionMode == CONNECTION_4G_FIRST) {
         Serial.println("[UPLOAD] Trying 4G upload...");
         if (cellularBegin()) {
           String resp;
           bool ok = false;
-          if (urgentUploadPending) {
+          if (wasUrgent) {
             ok = cellularHttpPostCritical(BACKEND_HOST, BACKEND_PORT, BACKEND_PATH, localBody, resp);
           } else {
             ok = cellularHttpPost(BACKEND_HOST, BACKEND_PORT, BACKEND_PATH, localBody, resp);
           }
           if (ok) {
-            Serial.println(String("[UPLOAD] ✅ Upload 4G OK: ") + resp);
+            Serial.println(String("[UPLOAD] Upload 4G OK: ") + resp);
+            uploadSuccess = true;
           } else {
-            Serial.println("[UPLOAD] ❌ Upload 4G FAIL");
+            Serial.println("[UPLOAD] Upload 4G FAIL");
           }
         } else {
-          Serial.println("[UPLOAD] ❌ 4G not connected");
+          Serial.println("[UPLOAD] 4G not connected");
         }
       } else if (WiFi.status() == WL_CONNECTED) {
         Serial.println("[UPLOAD] Trying WiFi upload...");
@@ -232,17 +241,35 @@ void uploadTask(void* param) {
 
         if (httpCode == 200) {
           String response = http.getString();
-          Serial.println("[UPLOAD] ✅ Upload WiFi OK: " + response);
+          Serial.println("[UPLOAD] Upload WiFi OK: " + response);
+          uploadSuccess = true;
         } else {
-          Serial.println("[UPLOAD] ❌ Upload WiFi FAIL: " + String(httpCode));
+          Serial.println("[UPLOAD] Upload WiFi FAIL: " + String(httpCode));
         }
         http.end();
       } else {
-        Serial.println("[UPLOAD] ❌ No connection (4G or WiFi)");
+        Serial.println("[UPLOAD] No connection (4G or WiFi)");
       }
 
-      uploadPending = false;
-      urgentUploadPending = false;
+      // CHỈ RESET CỜ TƯƠNG ỨNG: Reset urgent nếu đã gửi urgent, reset normal nếu đã gửi normal
+      // QUAN TRỌNG: Kiểm tra lại trạng thái trước khi reset để tránh mất dữ liệu cảnh báo mới
+      if (xSemaphoreTake(uploadMutex, portMAX_DELAY)) {
+        if (wasUrgent && urgentUploadPending) {
+          // Chỉ reset nếu vẫn là urgent (có thể có urgent mới xuất hiện trong lúc upload)
+          urgentUploadPending = false;
+          Serial.println("[UPLOAD] Đã gửi dữ liệu cảnh báo, reset urgentUploadPending");
+        }
+        if (!wasUrgent && uploadPending && !urgentUploadPending) {
+          // Chỉ reset normal nếu không có urgent mới
+          uploadPending = false;
+          Serial.println("[UPLOAD] Đã gửi dữ liệu định kỳ, reset uploadPending");
+        }
+        // Nếu có urgent mới xuất hiện trong lúc upload normal, giữ nguyên urgentUploadPending
+        if (!wasUrgent && urgentUploadPending) {
+          Serial.println("[UPLOAD] Phát hiện cảnh báo mới trong lúc upload, sẽ xử lý ngay ở lần lặp tiếp theo");
+        }
+        xSemaphoreGive(uploadMutex);
+      }
     }
 
     delay(500);  // Check every 500ms
@@ -255,7 +282,7 @@ void uploadTask(void* param) {
  * Task chỉ chạy một lần rồi tự hủy (`vTaskDelete`) sau khi gọi `checkFirmwareUpdate()`.
  */
 void firmwareCheckTask(void* param) {
-  // ⚠️ Task này độc lập, không share với loopTask
+  // Task này độc lập, không share với loopTask
   Serial.println("[FIRMWARE_TASK] Bắt đầu kiểm tra firmware trong background task...");
 
   // Gọi checkFirmwareUpdate từ task riêng
@@ -283,14 +310,14 @@ void setup() {
   Serial.println("Flash Speed: " + String(ESP.getFlashChipSpeed() / 1000000) + " MHz");
   Serial.println("Free Heap: " + String(ESP.getFreeHeap()) + " bytes");
   Serial.println("MAC Address: " + WiFi.macAddress());
-  Serial.println("🚀 ESP32 Battery Monitor - Fast Boot Starting...");
+  Serial.println("ESP32 Battery Monitor - Fast Boot Starting...");
 
-  // 🔒 Create upload mutex EARLY, before any task starts
+  // Create upload mutex EARLY, before any task starts
   uploadMutex = xSemaphoreCreateMutex();
   if (uploadMutex == NULL) {
-    Serial.println("❌ Failed to create upload mutex!");
+    Serial.println("Failed to create upload mutex!");
   } else {
-    Serial.println("✅ Upload mutex created");
+    Serial.println("Upload mutex created");
   }
 
   // Khởi tạo watchdog với timeout dài hơn
@@ -298,13 +325,13 @@ void setup() {
   esp_task_wdt_add(NULL);
 
   // Fast Boot Path - chỉ khởi tạo tối thiểu
-  Serial.println("⚡ Fast Boot Path - khởi tạo tối thiểu...");
+  Serial.println("Fast Boot Path - khởi tạo tối thiểu...");
 
   // SPIFFS mount
   if (!SPIFFS.begin(true)) {
-    Serial.println("❌ SPIFFS mount failed");
+    Serial.println("SPIFFS mount failed");
   } else {
-    Serial.println("✅ SPIFFS đã khởi tạo");
+    Serial.println("SPIFFS đã khởi tạo");
   }
 
   // GPIO setup
@@ -334,8 +361,8 @@ void setup() {
   // Bật task riêng cho phần upload để chạy song song
   xTaskCreatePinnedToCore(uploadTask, "uploadTask", 8192, NULL, 1, NULL, 1);
 
-  Serial.println("⚡ Fast Boot Path done (<5s) - Web interface ready!");
-  Serial.println("🌐 Network initialization running in background...");
+  Serial.println("Fast Boot Path done (<5s) - Web interface ready!");
+  Serial.println("Network initialization running in background...");
 }
 
 /**
@@ -344,24 +371,24 @@ void setup() {
  * Ưu tiên modem 4G; nếu thất bại sẽ giữ thiết bị ở chế độ AP-only để kỹ thuật viên can thiệp.
  */
 void networkTask(void* param) {
-  // 🔒 DISABLE WATCHDOG - networkTask chỉ chạy 1 lần khi startup
+  // DISABLE WATCHDOG - networkTask chỉ chạy 1 lần khi startup
   // HTTP operations có thể mất thời gian, không cần watchdog check
   esp_task_wdt_delete(NULL);
 
-  Serial.println("🌐 Bắt đầu khởi tạo mạng nền...");
+  Serial.println("Bắt đầu khởi tạo mạng nền...");
 
   // Ưu tiên 4G
   if (cellularBegin()) {
     currentConnectionMode = CONNECTION_4G_FIRST;
-    // ⚠️ NỤ THÊM STABILIZATION DELAY SAU NETOPEN - KHÔNG CẦN RESET WATCHDOG ⚠️
-    Serial.println("[CELL] ⏳ Chờ modem ổn định 3 giây...");
+    // NỤ THÊM STABILIZATION DELAY SAU NETOPEN - KHÔNG CẦN RESET WATCHDOG
+    Serial.println("[CELL] Chờ modem ổn định 3 giây...");
     for (int i = 0; i < 6; i++) {  // 6 x 500ms = 3 giây
       delay(500);
       // Watchdog disabled - không cần reset
     }
 
     connectionEstablished = true;
-    Serial.println("✅ 4G connected (background)");
+    Serial.println("4G connected (background)");
 #if STARTUP_CHIME_ENABLED
     startupChimeWas4G = true;
 #endif
@@ -369,25 +396,25 @@ void networkTask(void* param) {
     // Không auto connect WiFi; giữ AP-only cho quản trị
     WiFi.setAutoConnect(false);
     WiFi.setAutoReconnect(false);
-    Serial.println("❌ 4G fail. AP-only mode; skip WiFi auto-connect.");
+    Serial.println("4G fail. AP-only mode; skip WiFi auto-connect.");
   }
 
   if (connectionEstablished) {
-    // ✅ KHÔNG SYNC NTP - SERVER XỬ LÝ TIMESTAMP
-    Serial.println("🌐 Network setup hoàn tất - bắt đầu gửi dữ liệu...");
+    // KHÔNG SYNC NTP - SERVER XỬ LÝ TIMESTAMP
+    Serial.println("Network setup hoàn tất - bắt đầu gửi dữ liệu...");
 
     readSensors();
     uploadImmediate();
 
     // Không tự động kiểm tra firmware trên boot để tránh gây khó chịu sau khi update
   } else {
-    Serial.println("❌ Không thể kết nối mạng - SẼ KHÔNG GỬI DỮ LIỆU");
-    Serial.println("⚠️ Chỉ log thông báo trực tiếp, không upload lên server");
+    Serial.println("Không thể kết nối mạng - SẼ KHÔNG GỬI DỮ LIỆU");
+    Serial.println("Chỉ log thông báo trực tiếp, không upload lên server");
   }
 
   if (LED_PIN >= 0) digitalWrite(LED_PIN, LOW);
-  Serial.println("🌐 Network task completed");
-  networkTaskCompleted = true;  // ✅ CHỈ ĐẶT LÀ TRUE KHI HOÀN TẤT
+  Serial.println("Network task completed");
+  networkTaskCompleted = true;  // CHỈ ĐẶT LÀ TRUE KHI HOÀN TẤT
 #if STARTUP_CHIME_ENABLED
   // Luôn xếp hàng chime sau khi setup mạng xong (mọi mode)
   if (!startupChimeDone) {
@@ -429,12 +456,12 @@ void loop() {
   server.handleClient();
   esp_task_wdt_reset(); // Reset after HTTP handling
 
-  // ❌ KHÔNG SYNC NTP - SERVER XỬ LÝ TIMESTAMP
+  // KHÔNG SYNC NTP - SERVER XỬ LÝ TIMESTAMP
   // Kiểm tra firmware update định kỳ (12 giờ) - chỉ khi có kết nối internet
   // if (currentTime - lastFirmwareCheck >= FIRMWARE_CHECK_INTERVAL) {
   //   // Chỉ kiểm tra firmware nếu đã có kết nối internet ổn định
   //   if (WiFi.status() == WL_CONNECTED || currentConnectionMode == CONNECTION_4G_FIRST) {
-  //     Serial.println("🔍 Kiểm tra firmware update định kỳ...");
+  //     Serial.println("Kiểm tra firmware update định kỳ...");
   //     checkFirmwareUpdate();
   //   } else {
   //     Serial.println("[FIRMWARE] Bỏ qua kiểm tra - chưa có kết nối internet");
@@ -505,7 +532,7 @@ void readSensors() {
 
   // // Kiểm tra cảm biến nhiệt độ
   // if (temperature == DEVICE_DISCONNECTED_C) {
-  //   Serial.println("❌ Lỗi: Không tìm thấy cảm biến DS18B20!");
+  //   Serial.println("Lỗi: Không tìm thấy cảm biến DS18B20!");
   //   Serial.println("Kiểm tra kết nối: VCC->3.3V, GND->GND, Data->GPIO23");
   //   Serial.println("Cần điện trở pull-up 4.7kΩ giữa Data và VCC");
   // }
@@ -554,8 +581,12 @@ void readSensors() {
  *
  * Khi bất kỳ mô-đun nào vượt ngưỡng, bật còi/LED và lên lịch upload gấp.
  * Đồng thời lưu lại cờ alert để gửi về backend.
+ * Gửi lại cảnh báo định kỳ (mỗi 30 giây) khi cảnh báo vẫn còn active để đảm bảo backend nhận được dữ liệu.
  */
 void checkAlerts() {
+  static unsigned long lastAlertUpload = 0; // Thời gian gửi cảnh báo cuối cùng
+  const unsigned long ALERT_REPEAT_INTERVAL = 30000; // Gửi lại cảnh báo mỗi 30 giây
+  
   bool tempAlert = (temperature > TEMP_THRESHOLD);
   bool smokeAlert = (smokeValue > SMOKE_THRESHOLD);
   bool fireAlert = (fireValue10 < FIRE_ANALOG_THRESHOLD); // KY-026: giá trị thấp hơn = gần lửa
@@ -577,33 +608,51 @@ void checkAlerts() {
   if (shouldAlert) {
     // Liệt kê các mô-đun đang cảnh báo (không dùng sensitivity)
     if (tempAlert) {
-      alertReason += "🔥 NHIỆT ĐỘ CAO (" + String(temperature, 1) + "°C)";
+      alertReason += "NHIET DO CAO (" + String(temperature, 1) + "°C)";
     }
     if (smokeAlert) {
       if (alertReason.length()) alertReason += " | ";
-      alertReason += "💨 KHÍ ĐỘC HẠI (" + String(smokeValue) + ")";
+      alertReason += "KHI DOC HAI (" + String(smokeValue) + ")";
     }
     if (fireAlert) {
       if (alertReason.length()) alertReason += " | ";
-      alertReason += "🔥 LỬA (KY-026)";
+      alertReason += "LUA (KY-026)";
     }
   }
 
   // Kích hoạt/tắt cảnh báo và đảm bảo trạng thái còi/LED theo thời gian thực
   if (shouldAlert) {
+    unsigned long now = millis();
+    bool shouldUploadAlert = false;
+    
     if (!alertActive) {
+      // Cảnh báo mới xuất hiện - gửi ngay lập tức
       alertActive = true;
-      Serial.println("🚨 CẢNH BÁO: " + alertReason);
-      // Gửi ngay lập tức khi có cảnh báo (critical path)
+      Serial.println("CANH BAO: " + alertReason);
+      shouldUploadAlert = true;
+      lastAlertUpload = now;
+    } else {
+      // Cảnh báo vẫn còn active - gửi lại định kỳ để đảm bảo backend nhận được
+      if (now - lastAlertUpload >= ALERT_REPEAT_INTERVAL) {
+        Serial.println("CANH BAO (lap lai): " + alertReason);
+        shouldUploadAlert = true;
+        lastAlertUpload = now;
+      }
+    }
+    
+    // Gửi dữ liệu cảnh báo nếu cần
+    if (shouldUploadAlert) {
       uploadImmediateCritical();
     }
+    
     // Đảm bảo bật còi/LED khi đang trong trạng thái cảnh báo
     if (LED_PIN >= 0) digitalWrite(LED_PIN, HIGH);
     if (!buzzerIsOn) buzzerOn();
   } else {
     if (alertActive) {
       alertActive = false;
-      Serial.println("✅ Tình trạng bình thường");
+      lastAlertUpload = 0; // Reset timer khi hết cảnh báo
+      Serial.println("Tinh trang binh thuong");
     }
     // Đảm bảo tắt còi/LED khi hết cảnh báo
     if (LED_PIN >= 0) digitalWrite(LED_PIN, LOW);
@@ -625,14 +674,14 @@ void activateAlerts() {
   Serial.println("=== CHI TIẾT CẢNH BÁO ===");
 
   if (temperature > TEMP_THRESHOLD) {
-    Serial.println("🔥 NHIỆT ĐỘ CAO: " + String(temperature, 1) + "°C (Nguy hiểm!)");
+    Serial.println("NHIET DO CAO: " + String(temperature, 1) + "°C (Nguy hiểm!)");
   }
 
   if (smokeValue > SMOKE_THRESHOLD) {
-    Serial.println("💨 KHÍ ĐỘC HẠI: " + String(smokeValue) + " (Pin có thể xì khí)");
+    Serial.println("KHI DOC HAI: " + String(smokeValue) + " (Pin có thể xì khí)");
   }
   if (fireValue10 < FIRE_ANALOG_THRESHOLD) {
-    Serial.println("🔥 LỬA (KY-026): " + String(fireValue10) + " (< ngưỡng " + String(FIRE_ANALOG_THRESHOLD) + ")");
+    Serial.println("LUA (KY-026): " + String(fireValue10) + " (< ngưỡng " + String(FIRE_ANALOG_THRESHOLD) + ")");
   }
 
   Serial.println("=========================");
@@ -653,15 +702,15 @@ void deactivateAlerts() {
  * Hiện firmware sử dụng networkTask chạy nền, hàm này giữ lại để tham khảo và debug.
  */
 void startNetworking() {
-  Serial.println("🌐 Bắt đầu kết nối mạng...");
+  Serial.println("Bắt đầu kết nối mạng...");
 
   // Bước 0: Luôn khởi tạo AP chính trước (đảm bảo AP luôn có)
-  Serial.println("📡 Khởi tạo AP chính trước...");
+  Serial.println("Khởi tạo AP chính trước...");
   startMainAP();
 
   // Bước 1: Thử kết nối 4G trước (ưu tiên cao nhất)
   #if ENABLE_CELLULAR_UPLOAD
-  Serial.println("📡 Thử kết nối 4G...");
+  Serial.println("Thử kết nối 4G...");
 
   // Thử kết nối 4G với retry logic
   bool cellularConnected = false;
@@ -674,7 +723,7 @@ void startNetworking() {
 
     if (cellularBegin()) {
       cellularConnected = true;
-      Serial.println("✅ 4G đã kết nối!");
+      Serial.println("4G đã kết nối!");
       currentConnectionMode = CONNECTION_4G_FIRST;
       connectionEstablished = true;
 #if STARTUP_CHIME_ENABLED
@@ -682,17 +731,17 @@ void startNetworking() {
 #endif
       return; // Thành công với 4G, không cần WiFi
     } else {
-      Serial.printf("❌ 4G kết nối thất bại lần %d\n", retry + 1);
+      Serial.printf("4G kết nối thất bại lần %d\n", retry + 1);
     }
   }
 
   if (!cellularConnected) {
-    Serial.println("❌ 4G kết nối thất bại sau 2 lần thử");
+    Serial.println("4G kết nối thất bại sau 2 lần thử");
   }
   #endif
 
   // Bước 2: Bỏ auto WiFi fallback; giữ AP-only
-  Serial.println("📡 Bỏ qua WiFi fallback. Giữ AP quản trị hoạt động");
+  Serial.println("Bỏ qua WiFi fallback. Giữ AP quản trị hoạt động");
 }
 
 /**
@@ -714,12 +763,12 @@ void startMainAP() {
 
   if (apStarted) {
     IPAddress apIP = WiFi.softAPIP();
-    Serial.println("📡 AP Quản trị đã khởi động:");
+    Serial.println("AP Quản trị đã khởi động:");
     Serial.print("SSID: "); Serial.println(AP_SSID);
     Serial.print("Password: "); Serial.println(AP_PASSWORD);
     Serial.print("IP: "); Serial.println(apIP);
-    Serial.println("📱 Truy cập: http://192.168.4.1");
-    Serial.println("🔒 AP này sẽ luôn hoạt động, không bị tắt khi kết nối WiFi");
+    Serial.println("Truy cập: http://192.168.4.1");
+    Serial.println("AP này sẽ luôn hoạt động, không bị tắt khi kết nối WiFi");
 
     // Đăng ký routes cho quản trị
     server.on("/wifi-scan", handleWiFiScan);
@@ -727,7 +776,7 @@ void startMainAP() {
     server.on("/wifi-reset", HTTP_POST, handleWiFiReset);
     server.on("/firmware-update", handleFirmwareWebInterface);
   } else {
-    Serial.println("❌ Không thể khởi động AP quản trị!");
+    Serial.println("Không thể khởi động AP quản trị!");
   }
 }
 
@@ -812,7 +861,7 @@ void startWebServer() {
 String renderHtml() {
   String html = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>";
   html += "<title>Battery Monitor - Admin Panel</title><style>body{font-family:Arial;padding:16px} .card{border:1px solid #ddd;border-radius:8px;padding:12px;margin:8px 0} .ok{color:#2e7d32}.warn{color:#d32f2f} .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px} .network-status{padding:10px;border-radius:5px;margin:10px 0} .wifi-connected{background:#e8f5e8;border-left:4px solid #4caf50} .cellular-connected{background:#e3f2fd;border-left:4px solid #2196f3} .ap-mode{background:#fff3e0;border-left:4px solid #ff9800} .button{background:#2196f3;color:white;padding:8px 16px;border:none;border-radius:3px;cursor:pointer;margin:5px;text-decoration:none;display:inline-block} .firmware-notification{background:#ffebee;border:2px solid #f44336;border-radius:8px;padding:15px;margin:15px 0} .firmware-notification h3{color:#d32f2f;margin-top:0} .close-btn{float:right;background:#f44336;color:white;border:none;padding:5px 10px;border-radius:3px;cursor:pointer}</style></head><body>";
-  html += "<h2>🔋 Battery Smart Sensor - Admin Panel</h2>";
+  html += "<h2>Battery Smart Sensor - Admin Panel</h2>";
   // Flash message placeholder
   html += "<div id='flash'></div>";
 
@@ -834,7 +883,7 @@ String renderHtml() {
   if (firmwareUpdateAvailable) {
     html += "<div class='firmware-notification'>";
     html += "<button class='close-btn' onclick='this.parentElement.style.display=\"none\"'>✕</button>";
-    html += "<h3>🔄 Firmware Update Available!</h3>";
+    html += "<h3>Firmware Update Available!</h3>";
     html += "<p><strong>New Version:</strong> " + latestFirmwareDisplayVersion + "</p>";
     html += "<p><strong>Current Version:</strong> " + String(FIRMWARE_VERSION) + " (Build " + String(FIRMWARE_BUILD) + ")</p>";
     html += "<button class='button' onclick='checkFirmwareUpdate()'>Update Now</button>";
@@ -846,40 +895,40 @@ String renderHtml() {
   html += "<div class='network-status ";
   if (currentConnectionMode == CONNECTION_4G_FIRST) {
     html += "cellular-connected'>";
-    html += "<strong>📡 Hệ thống đã nhận SIM!</strong><br>";
+    html += "<strong>Hệ thống đã nhận SIM!</strong><br>";
     // Hiển thị thông tin trạng thái 4G
     html += cellularStatusSummary();
   } else if (currentConnectionMode == CONNECTION_WIFI_FIRST) {
     html += "wifi-connected'>";
-    html += "<strong>📶 WiFi-First Mode</strong><br>";
+    html += "<strong>WiFi-First Mode</strong><br>";
     if (WiFi.status() == WL_CONNECTED) {
       html += "SSID: " + WiFi.SSID() + "<br>";
       html += "IP: " + WiFi.localIP().toString() + "<br>";
-      html += "✅ WiFi Connected";
+      html += "WiFi Connected";
     } else {
-      html += "❌ WiFi Disconnected<br>";
+      html += "WiFi Disconnected<br>";
       html += "Fallback to 4G";
     }
   } else {
     html += "ap-mode'>";
-    html += "<strong>📡 Không phát hiện SIM!</strong><br>";
+    html += "<strong>Không phát hiện SIM!</strong><br>";
     html += "Không thể kết nối tới máy chủ<br>";
     html += "Vui lòng kiểm tra lại kết nối SIM và thử lại!";
   }
   html += "</div>";
 
   html += "<div class='grid'>";
-  html += "<div class='card'><h3>🌡️ Nhiệt Độ</h3><div>" + String(temperature, 1) + " °C</div></div>";
-  html += "<div class='card'><h3>💨 Chất Lượng Không Khí (MQ-135)</h3><div>" + String(smokeValue) + "</div></div>";
-  html += "<div class='card'><h3>🔥 Lửa (KY-026)</h3><div>" + String(fireValue10) + "</div></div>";
-  html += String("<div class='card'><h3>🚨 Cảnh Báo</h3><div class='") + (alertActive ? "warn'>CẢNH BÁO" : "ok'>Bình thường") + "</div></div>";
+  html += "<div class='card'><h3>Nhiệt Độ</h3><div>" + String(temperature, 1) + " °C</div></div>";
+  html += "<div class='card'><h3>Chất Lượng Không Khí (MQ-135)</h3><div>" + String(smokeValue) + "</div></div>";
+  html += "<div class='card'><h3>Lửa (KY-026)</h3><div>" + String(fireValue10) + "</div></div>";
+  html += String("<div class='card'><h3>Cảnh Báo</h3><div class='") + (alertActive ? "warn'>CẢNH BÁO" : "ok'>Bình thường") + "</div></div>";
   html += "</div>";
 
   // Admin actions (ẩn WiFi Setup khỏi trang chính)
   html += "<div style='margin:20px 0'>";
-  html += "<h3>🔧 Admin Actions</h3>";
-  html += "<button class='button' onclick='checkFirmwareUpdate()'>🔄 Kiểm tra cập nhật</button>";
-  html += "<a href='/api/status' class='button'>📊 Debug</a>";
+  html += "<h3>Admin Actions</h3>";
+  html += "<button class='button' onclick='checkFirmwareUpdate()'>Kiểm tra cập nhật</button>";
+  html += "<a href='/api/status' class='button'>Debug</a>";
   html += "</div>";
 
   html += "<p><small>Device: " DEVICE_ID " | Firmware: " + String(FIRMWARE_VERSION) + " (Build " + String(FIRMWARE_BUILD) + ")</small></p>";
@@ -888,7 +937,7 @@ String renderHtml() {
   html += "function showModal(t, m){var r=document.getElementById('modalRoot');document.getElementById('modalTitle').textContent=t;document.getElementById('modalText').textContent=m;r.style.display='block';}";
   html += "function hideModal(){document.getElementById('modalRoot').style.display='none';}";
   // Dùng localStorage để truyền trạng thái thay vì query string
-  html += "(function(){try{if(localStorage.getItem('updated')==='1'){showModal('✅ Cập nhật thành công','Vui lòng chờ 2-3 phút để khởi động lại...');localStorage.removeItem('updated');}}catch(e){}})();";
+  html += "(function(){try{if(localStorage.getItem('updated')==='1'){showModal('Cập nhật thành công','Vui lòng chờ 2-3 phút để khởi động lại...');localStorage.removeItem('updated');}}catch(e){}})();";
   html += "(function(){try{if(localStorage.getItem('updating')==='1'){showModal('Đang cập nhật firmware...','Vui lòng chờ, không thao tác');localStorage.removeItem('updating');fetch('/api/firmware/update-wifi',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.status==='success'){localStorage.setItem('updated','1');location.href='/';}else{hideModal();alert('Lỗi cập nhật: '+(d.error||'Unknown'));}}).catch(e=>{hideModal();alert('Lỗi kết nối: '+e);});}}catch(e){}})();";
   // Nếu được đưa về với updating=1: hiện overlay chờ và tự gọi update để ngăn spam
   html += "(function(){try{var p=new URLSearchParams(location.search);if(p.get('updating')==='1'){";
@@ -906,13 +955,13 @@ String renderHtml() {
   html += "    .then(r => r.json())";
   html += "    .then(d => {";
   html += "      hideOverlay();";
-  html += "      if (d.error) { alert('❌ Không thể kiểm tra firmware: ' + d.error); return; }";
+  html += "      if (d.error) { alert('Không thể kiểm tra firmware: ' + d.error); return; }";
   html += "      if (d.update_available) {";
   html += "        if (confirm('Có firmware mới: ' + d.latest_version + '\\n\\nBạn có muốn cập nhật không?')) {";
   html += "          window.location.href = '/firmware-update';";
   html += "        }";
   html += "      } else {";
-  html += "        alert('✅ Đã là phiên bản mới nhất: ' + d.current_version + ' (Build ' + d.current_build + ')');";
+  html += "        alert('Đã là phiên bản mới nhất: ' + d.current_version + ' (Build ' + d.current_build + ')');";
   html += "      }";
   html += "    })";
   html += "    .catch(e => { hideOverlay(); alert('Kiểm tra firmware thất bại: ' + e); });";
@@ -962,7 +1011,7 @@ void handleApiStatus() {
  * @brief Đặt lịch upload dữ liệu định kỳ (60 giây/lần) thông qua task upload.
  */
 void tryBackendUpload() {
-  // 🔒 CẤM UPLOAD TRƯỚC KHI NETWORK TASK HOÀN TẤT
+  // CẤM UPLOAD TRƯỚC KHI NETWORK TASK HOÀN TẤT
   if (!networkTaskCompleted) {
     return;  // Tất cả các request upload bị cấm cho đến khi network setup xong
   }
@@ -987,7 +1036,7 @@ void tryBackendUpload() {
   String body;
   serializeJson(doc, body);
 
-  // ✅ USE ASYNC UPLOAD: Đặt flag để upload task xử lý
+  // USE ASYNC UPLOAD: Đặt flag để upload task xử lý
   // Cách này tránh block main loop
   if (xSemaphoreTake(uploadMutex, 100)) {
     uploadBody = body;
@@ -1000,8 +1049,8 @@ void tryBackendUpload() {
  * @brief Đặt lịch upload ngay lập tức (không khẩn cấp) thông qua task upload.
  */
 void uploadImmediate() {
-  // ✅ USE ASYNC UPLOAD: Đặt flag để upload task xử lý ngay
-  Serial.println("[UPLOAD] ⏳ Bắt đầu upload immediate...");
+  // USE ASYNC UPLOAD: Đặt flag để upload task xử lý ngay
+  Serial.println("[UPLOAD] Bắt đầu upload immediate...");
 
   JsonDocument doc;
   // Không gửi timestamp, để server tự tạo
@@ -1016,7 +1065,7 @@ void uploadImmediate() {
   String body;
   serializeJson(doc, body);
 
-  // 🔒 Protect uploadBody assignment with mutex
+  // Protect uploadBody assignment with mutex
   if (xSemaphoreTake(uploadMutex, 100)) {
     uploadBody = body;
     xSemaphoreGive(uploadMutex);
@@ -1029,7 +1078,7 @@ void uploadImmediate() {
  */
 void uploadImmediateCritical() {
   // Gửi khẩn: dùng path timeout ngắn, không retry
-  Serial.println("[UPLOAD][URGENT] ⏳ Bắt đầu upload immediate (CRITICAL)...");
+  Serial.println("[UPLOAD][URGENT] Bắt đầu upload immediate (CRITICAL)...");
   JsonDocument doc;
   doc["temperature"] = temperature;
   doc["smoke_value"] = smokeValue;
@@ -1052,14 +1101,14 @@ void uploadImmediateCritical() {
  * @brief Quy trình kiểm tra nhanh các cảm biến và phần cứng cảnh báo (dành cho kỹ thuật viên).
  */
 void testSensors() {
-  Serial.println("🔍 Kiểm tra cảm biến nhiệt độ DS18B20...");
+  Serial.println("Kiểm tra cảm biến nhiệt độ DS18B20...");
   tempSensor.begin();
   int deviceCount = tempSensor.getDeviceCount();
   Serial.print("Số lượng cảm biến DS18B20 tìm thấy: ");
   Serial.println(deviceCount);
 
   if (deviceCount == 0) {
-    Serial.println("❌ Không tìm thấy cảm biến DS18B20!");
+    Serial.println("Không tìm thấy cảm biến DS18B20!");
     Serial.println("Kiểm tra:");
     Serial.println("- VCC kết nối với 3.3V hoặc 5V");
     Serial.println("- GND kết nối với GND");
@@ -1068,31 +1117,31 @@ void testSensors() {
   } else {
     tempSensor.requestTemperatures();
     float testTemp = tempSensor.getTempCByIndex(0);
-    Serial.print("✅ Nhiệt độ đọc được: ");
+    Serial.print("Nhiệt độ đọc được: ");
     Serial.print(testTemp);
     Serial.println(" °C");
   }
 
-  Serial.println("🔍 Kiểm tra cảm biến lửa KY-026 (Analog)...");
+  Serial.println("Kiểm tra cảm biến lửa KY-026 (Analog)...");
   int fireTest = analogRead(FIRE_SENSOR_ANALOG_PIN);
   int fireTest10 = fireTest >> 2; // 12-bit → 10-bit
   Serial.print("Giá trị analog KY-026 (10-bit): ");
   Serial.println(fireTest10);
   Serial.println("(0-1023, so với FIRE_ANALOG_THRESHOLD)");
 
-  Serial.println("🔍 Kiểm tra cảm biến khí MQ-135...");
+  Serial.println("Kiểm tra cảm biến khí MQ-135...");
   int smokeTest = analogRead(SMOKE_SENSOR_PIN);
   Serial.print("Giá trị analog MQ-135: ");
   Serial.println(smokeTest);
   Serial.println("(0-4095, giá trị cao = nồng độ MQ-135 cao)");
 
-  Serial.println("🔍 Test LED và Buzzer...");
+  Serial.println("Test LED và Buzzer...");
   if (LED_PIN >= 0) digitalWrite(LED_PIN, HIGH);
   buzzerOn();
   delay(500);
   if (LED_PIN >= 0) digitalWrite(LED_PIN, LOW);
   buzzerOff();
-  Serial.println("✅ LED và Buzzer hoạt động bình thường");
+  Serial.println("LED và Buzzer hoạt động bình thường");
 
   Serial.println("=== KẾT THÚC TEST ===");
 }
@@ -1175,7 +1224,7 @@ void handleWiFiScan() {
   }
   wifiScanInProgress = true;
   wifiScanLastStartMs = now;
-  Serial.println("🔍 Quét WiFi xung quanh...");
+  Serial.println("Quét WiFi xung quanh...");
 
   WiFi.mode(WIFI_AP_STA);
   if (server.hasArg("rescan")) {
@@ -1211,7 +1260,7 @@ void handleWiFiScan() {
   html += ".button:hover{background:#1976d2}</style></head><body>";
 
   html += "<div class='container'>";
-  html += "<h1>🔍 WiFi Networks Found</h1>";
+  html += "<h1>WiFi Networks Found</h1>";
   html += "<p>Found " + String(n) + " networks:</p>";
   html += "<a href='/wifi-scan?rescan=1' class='button'>Rescan</a> ";
   html += "<a href='/firmware-update' class='button'>← Back to Firmware Update</a>";
@@ -1269,7 +1318,7 @@ void handleWiFiConnect() {
     String ssid = server.arg("ssid");
     String password = server.arg("password");
 
-    Serial.println("🔗 Đang kết nối WiFi: " + ssid);
+    Serial.println("Đang kết nối WiFi: " + ssid);
 
     // Thử kết nối WiFi mới
     WiFi.mode(WIFI_AP_STA);
@@ -1285,7 +1334,7 @@ void handleWiFiConnect() {
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("✅ WiFi đã kết nối!");
+      Serial.println("WiFi đã kết nối!");
       Serial.print("IP: "); Serial.println(WiFi.localIP());
 
       // Lưu cấu hình WiFi vào SPIFFS
@@ -1293,7 +1342,7 @@ void handleWiFiConnect() {
 
       String html = "<!DOCTYPE html><html><head><meta charset='utf-8'>";
       html += "<title>Connected</title></head><body>";
-      html += "<h2>✅ WiFi Connected!</h2>";
+      html += "<h2>WiFi Connected!</h2>";
       html += "<p>SSID: " + ssid + "</p>";
       html += "<p>IP: " + WiFi.localIP().toString() + "</p>";
       html += "<p>Quay lại trang Firmware Update...</p>";
@@ -1303,11 +1352,11 @@ void handleWiFiConnect() {
       server.send(200, "text/html", html);
       // Không reset; giữ nguyên để user tiếp tục update
     } else {
-      Serial.println("❌ WiFi kết nối thất bại");
+      Serial.println("WiFi kết nối thất bại");
 
       String html = "<!DOCTYPE html><html><head><meta charset='utf-8'>";
       html += "<title>Connection Failed</title></head><body>";
-      html += "<h2>❌ WiFi Connection Failed</h2>";
+      html += "<h2>WiFi Connection Failed</h2>";
       html += "<p>SSID: " + ssid + "</p>";
       html += "<p>Please check password and try again.</p>";
       html += "<a href='/wifi-scan'>← Back to WiFi Scan</a>";
@@ -1324,7 +1373,7 @@ void handleWiFiConnect() {
  * @brief Endpoint `/wifi-reset` - xóa cấu hình Wi-Fi đã lưu và khởi động lại thiết bị.
  */
 void handleWiFiReset() {
-  Serial.println("🔄 Reset WiFi config...");
+  Serial.println("Reset WiFi config...");
 
   // Xóa cấu hình WiFi đã lưu
   SPIFFS.remove("/wifi_config.json");
@@ -1348,7 +1397,7 @@ void handleWiFiReset() {
 void saveWiFiConfig(String ssid, String password) {
   // Khởi tạo SPIFFS nếu chưa có
   if (!SPIFFS.begin(true)) {
-    Serial.println("❌ Lỗi khởi tạo SPIFFS");
+    Serial.println("Lỗi khởi tạo SPIFFS");
     return;
   }
 
@@ -1361,9 +1410,9 @@ void saveWiFiConfig(String ssid, String password) {
 
     serializeJson(doc, file);
     file.close();
-    Serial.println("✅ Đã lưu cấu hình WiFi: " + ssid);
+    Serial.println("Đã lưu cấu hình WiFi: " + ssid);
   } else {
-    Serial.println("❌ Không thể lưu cấu hình WiFi");
+    Serial.println("Không thể lưu cấu hình WiFi");
   }
 }
 
@@ -1373,7 +1422,7 @@ void saveWiFiConfig(String ssid, String password) {
  * @brief Endpoint `/api/firmware/update-wifi` - thực hiện OTA qua Wi-Fi khi firmware mới sẵn sàng.
  */
 void handleFirmwareUpdateWiFi() {
-  Serial.println("🔄 Bắt đầu cập nhật firmware qua WiFi...");
+  Serial.println("Bắt đầu cập nhật firmware qua WiFi...");
 
   if (!firmwareUpdateAvailable) {
     server.send(400, "application/json", "{\"error\":\"No firmware update available\"}");
@@ -1388,7 +1437,7 @@ void handleFirmwareUpdateWiFi() {
   // Tạo URL đầy đủ cho firmware
   String fullUrl = String("http://") + String(BACKEND_HOST) + ":" + String(BACKEND_PORT) + latestFirmwareUrl;
 
-  Serial.println("📥 Tải firmware từ: " + fullUrl);
+  Serial.println("Tải firmware từ: " + fullUrl);
 
   // Thực hiện OTA update
   bool success = performOTAUpdate(fullUrl, "WiFi");
@@ -1412,7 +1461,7 @@ void handleFirmwareUpdate4G() {
  * @brief Endpoint `/api/firmware/check` - kiểm tra trạng thái firmware (sync hoặc async).
  */
 void handleFirmwareCheck() {
-  Serial.println("🔍 Kiểm tra firmware update từ web interface...");
+  Serial.println("Kiểm tra firmware update từ web interface...");
 
   // Hỗ trợ chế độ đồng bộ: trả về kết quả thực sau khi kiểm tra xong
   if (server.hasArg("sync") && server.arg("sync") == "1") {
@@ -1481,7 +1530,7 @@ void handleFirmwareCheck() {
 
   // Tạo task riêng để kiểm tra firmware, không block web server
   xTaskCreatePinnedToCore([](void* param) {
-    // 🔒 Subscribe this task to watchdog
+    // Subscribe this task to watchdog
     esp_task_wdt_add(NULL);
     esp_task_wdt_reset();
 
@@ -1493,7 +1542,7 @@ void handleFirmwareCheck() {
     firmwareCheckInProgress = false;
     lastFirmwareCheck = millis();
 
-    // 🔒 Unsubscribe and delete task
+    // Unsubscribe and delete task
     esp_task_wdt_delete(NULL);
     vTaskDelete(NULL);
   }, "firmwareCheckAsync", 4096, NULL, 1, NULL, 1);

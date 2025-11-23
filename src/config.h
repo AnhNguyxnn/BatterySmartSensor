@@ -100,8 +100,8 @@
 // --------------------------------------------------------------------
 // THÔNG SỐ PHIÊN BẢN FIRMWARE
 // --------------------------------------------------------------------
-#define FIRMWARE_VERSION "1.0.1"
-#define FIRMWARE_BUILD 3
+#define FIRMWARE_VERSION "1.0.2"
+#define FIRMWARE_BUILD 1
 
 // Cấu hình OTA
 #define FIRMWARE_CHECK_INTERVAL 43200000  // 12 giờ (ms)

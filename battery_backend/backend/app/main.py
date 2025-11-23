@@ -50,15 +50,15 @@ def ensure_migrations():
                 # Thêm cột fire_value nếu chưa có
                 if "fire_value" not in cols:
                     conn.execute(text("ALTER TABLE readings ADD COLUMN fire_value INTEGER"))
-                    print("✅ Added column fire_value to readings")
+                    print(" Added column fire_value to readings")
                 
                 # Thêm các cột cảnh báo nếu chưa có
                 for col in ("temp_alert","smoke_alert","fire_alert"):
                     if col not in cols:
                         conn.execute(text(f"ALTER TABLE readings ADD COLUMN {col} BOOLEAN"))
-                        print(f"✅ Added column {col} to readings")
+                        print(f" Added column {col} to readings")
     except Exception as e:
-        print(f"⚠️ Migration check failed: {e}")
+        print(f" Migration check failed: {e}")
 
 # Chạy migration khi khởi động ứng dụng
 ensure_migrations()
@@ -148,11 +148,11 @@ templates.env.filters["datetime_to_local"] = datetime_to_local
 # Lấy API key từ biến môi trường, fallback về key mặc định (chỉ dùng development)
 API_KEY = os.getenv("BATTERY_API_KEY")
 if not API_KEY:
-    print("⚠️  WARNING: BATTERY_API_KEY not set in environment variables!")
+    print("  WARNING: BATTERY_API_KEY not set in environment variables!")
     print("   Using default key for development. Change this in production!")
     API_KEY = "battery_monitor_2024_secure_key"
 
-print(f"🔑 API Key loaded: {API_KEY[:8]}...{API_KEY[-8:] if len(API_KEY) > 16 else '***'}")
+print(f"API Key loaded: {API_KEY[:8]}...{API_KEY[-8:] if len(API_KEY) > 16 else '***'}")
 
 
 def verify_api_key(x_api_key: str = Header(None)):
@@ -205,7 +205,7 @@ def send_telegram_message(text: str):
         text (str): Nội dung tin nhắn (HTML format)
     """
     if not _can_send_telegram():
-        print("ℹ️ Telegram not configured. Skipping message.")
+        print(" Telegram not configured. Skipping message.")
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -217,9 +217,9 @@ def send_telegram_message(text: str):
         }
         resp = requests.post(url, json=payload, timeout=10)
         if resp.status_code != 200:
-            print(f"⚠️ Telegram send failed: {resp.status_code} {resp.text}")
+            print(f" Telegram send failed: {resp.status_code} {resp.text}")
     except Exception as e:
-        print(f"⚠️ Telegram send error: {e}")
+        print(f" Telegram send error: {e}")
 
 
 def format_alert_message(payload: schemas.IngestRequest, server_timestamp: int) -> str:
@@ -389,9 +389,9 @@ def ingest(
             message = format_alert_message(payload, server_timestamp)
             background_tasks.add_task(send_telegram_message, message)
     except Exception as e:
-        print(f"⚠️ Failed to schedule Telegram alert: {e}")
+        print(f" Failed to schedule Telegram alert: {e}")
 
-    print(f"📊 Received data from {payload.device_id} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f" Received data from {payload.device_id} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     return schemas.IngestResponse(id=entity.id, status="ok")
 
 

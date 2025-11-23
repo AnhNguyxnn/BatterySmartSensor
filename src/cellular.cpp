@@ -119,7 +119,7 @@ bool cellularBegin() {
   }
   // Always try to maintain connection - don't do aggressive re-init
   if (isModemReady && isDataConnected) {
-    Serial.println("[CELL] ✅ Đã kết nối - reuse connection");
+    Serial.println("[CELL]  Đã kết nối - reuse connection");
     return true;
   }
   
@@ -136,7 +136,7 @@ bool cellularBegin() {
     
     bool atOk = modem.testAT();
     if (!atOk) {
-      Serial.println("[CELL] ⚠️ Không nhận được phản hồi AT. Thử các cấu hình chân khác...");
+      Serial.println("[CELL]  Không nhận được phản hồi AT. Thử các cấu hình chân khác...");
       const int cand[][2] = {{CELL_TX_PIN, CELL_RX_PIN}, {27, 26}, {26, 27}};
       unsigned long scanStart = millis();
       for (size_t i = 0; i < 3; i++) {
@@ -149,13 +149,13 @@ bool cellularBegin() {
         Serial.printf("[CELL] Thử UART2 fallback: RX=%d, TX=%d...\n", rx, tx);
         delay(200);
         if (modem.testAT()) {
-          Serial.printf("[CELL] ✅ Modem phản hồi với RX=%d, TX=%d\n", rx, tx);
+          Serial.printf("[CELL]  Modem phản hồi với RX=%d, TX=%d\n", rx, tx);
           atOk = true;
           break;
         }
       }
       if (!atOk) {
-        Serial.println("[CELL] ❌ Không tìm được UART hoạt động");
+        Serial.println("[CELL]  Không tìm được UART hoạt động");
         return false;
       }
     }
@@ -181,7 +181,7 @@ bool cellularBegin() {
     }
     
     if (!modemReady) {
-      Serial.println("[CELL] ❌ Modem không khởi động được");
+      Serial.println("[CELL]  Modem không khởi động được");
       logCEER();
       return false;
     }
@@ -204,10 +204,10 @@ bool cellularBegin() {
     int cpinCheck = modem.waitResponse(1000);
     
     if (cpinCheck != 1) {
-      Serial.println("[CELL] ❌ SIM card NOT detected");
+      Serial.println("[CELL]  SIM card NOT detected");
       return false;
     }
-    Serial.println("[CELL] ✅ SIM card detected");
+    Serial.println("[CELL]  SIM card detected");
   }
   
   // ===== PHASE 2: Establish Data Connection =====
@@ -219,9 +219,9 @@ bool cellularBegin() {
   for (int gprsRetry = 0; gprsRetry < 4; gprsRetry++) {  // Tăng từ 3 lên 4 lần thử
     // Kiểm tra signal quality trước khi kết nối
     int16_t csq = modem.getSignalQuality();
-    Serial.printf("[CELL] 📶 Signal quality (CSQ): %d\n", csq);
+    Serial.printf("[CELL]  Signal quality (CSQ): %d\n", csq);
     if (csq < 5 && csq >= 0) {
-      Serial.println("[CELL] ⚠️ Signal yếu, chờ cải thiện...");
+      Serial.println("[CELL]  Signal yếu, chờ cải thiện...");
       delay(3000);
     }
     
@@ -229,7 +229,7 @@ bool cellularBegin() {
       gprsOk = true;
       break;
     }
-    Serial.printf("[CELL] ❌ GPRS connect failed (attempt %d/4)\n", gprsRetry + 1);
+    Serial.printf("[CELL]  GPRS connect failed (attempt %d/4)\n", gprsRetry + 1);
     if (gprsRetry < 3) {
       // Exponential backoff: 2s, 4s, 6s
       delay(2000 * (gprsRetry + 1));
@@ -237,11 +237,11 @@ bool cellularBegin() {
   }
   
   if (!gprsOk) {
-    Serial.println("[CELL] ❌ GPRS connect failed after 4 attempts");
+    Serial.println("[CELL]  GPRS connect failed after 4 attempts");
     isDataConnected = false;
     return false;
   }
-  Serial.println("[CELL] ✅ GPRS connected");
+  Serial.println("[CELL]  GPRS connected");
   
   // Network Open (activate data context) - đảm bảo đóng trước khi mở lại
   Serial.println("[CELL] Đóng NETOPEN cũ (nếu có)...");
@@ -256,7 +256,7 @@ bool cellularBegin() {
     modem.sendAT("+NETOPEN");
     int response = modem.waitResponse(8000);  // Tăng timeout từ 5s lên 8s
     if (response == 1) {
-      Serial.println("[CELL] ✅ NETOPEN thành công");
+      Serial.println("[CELL]  NETOPEN thành công");
       netopenOk = true;
       break;
     }
@@ -267,7 +267,7 @@ bool cellularBegin() {
   }
   
   if (!netopenOk) {
-    Serial.println("[CELL] ❌ NETOPEN failed after 3 attempts");
+    Serial.println("[CELL]  NETOPEN failed after 3 attempts");
     isDataConnected = false;
     // Thử đóng lại để cleanup
     modem.sendAT("+NETCLOSE");
@@ -281,19 +281,19 @@ bool cellularBegin() {
   esp_task_wdt_reset(); // Reset after DNS config
   
   // Check signal strength
-  Serial.print("[CELL] 📶 Kiểm tra signal: ");
+  Serial.print("[CELL]  Kiểm tra signal: ");
   modem.sendAT("+CSQ");
   modem.waitResponse(1000);
   esp_task_wdt_reset(); // Reset after signal check
   
   // Pre-resolve backend host DNS ONE TIME để cache (không resolve lại mỗi request)
-  Serial.println("[CELL] 🌐 Resolve backend host...");
+  Serial.println("[CELL]  Resolve backend host...");
   modem.sendAT("+CDNSGIP=\"" BACKEND_HOST "\"");
   modem.waitResponse(5000);
   esp_task_wdt_reset(); // Reset after DNS resolution
   
-  // ⏳ Chờ thêm cho HTTP client ổn định
-  Serial.println("[CELL] ⏳ HTTP client initializing...");
+  //  Chờ thêm cho HTTP client ổn định
+  Serial.println("[CELL]  HTTP client initializing...");
   for (int i = 0; i < 3; i++) {  // 3 x 500ms = 1.5 giây để ổn định hơn
     delay(500);
     esp_task_wdt_reset(); // Reset watchdog during stabilization delays
@@ -301,10 +301,10 @@ bool cellularBegin() {
   
   // Kiểm tra lại signal quality sau khi kết nối
   int16_t finalCsq = modem.getSignalQuality();
-  Serial.printf("[CELL] 📶 Final signal quality: %d\n", finalCsq);
+  Serial.printf("[CELL]  Final signal quality: %d\n", finalCsq);
   
   isDataConnected = true;
-  Serial.println("[CELL] ✅ Kết nối 4G hoàn tất!");
+  Serial.println("[CELL]  Kết nối 4G hoàn tất!");
   return true;
 }
 
@@ -317,14 +317,14 @@ static bool ensureCellularConnection() {
   // Kiểm tra signal quality
   int16_t csq = modem.getSignalQuality();
   if (csq < 0 || (csq >= 0 && csq < 3)) {
-    Serial.println("[CELL] ⚠️ Signal quá yếu, đánh dấu mất kết nối");
+    Serial.println("[CELL]  Signal quá yếu, đánh dấu mất kết nối");
     isDataConnected = false;
     return false;
   }
   
   // Kiểm tra trạng thái data connection
   if (!isDataConnected || !isModemReady) {
-    Serial.println("[CELL] ⚠️ Kết nối data bị mất, cần reconnect");
+    Serial.println("[CELL]  Kết nối data bị mất, cần reconnect");
     return false;
   }
   
@@ -349,7 +349,7 @@ bool cellularHttpPost(const char* host, uint16_t port, const char* path, const S
   if (!ensureCellularConnection()) {
     Serial.println("[CELL] Đang reconnect...");
     if (!cellularBegin()) {
-      Serial.println("[CELL] ❌ Reconnect thất bại");
+      Serial.println("[CELL]  Reconnect thất bại");
       if (cellularHttpMutex) xSemaphoreGive(cellularHttpMutex);
       return false;
     }
@@ -363,7 +363,7 @@ bool cellularHttpPost(const char* host, uint16_t port, const char* path, const S
   Serial.println(port);
   esp_task_wdt_reset();
   
-  // ✅ DNS đã cached trong cellularBegin() - không cần resolve lại
+  //  DNS đã cached trong cellularBegin() - không cần resolve lại
   // HTTP request với timeout
   HttpClient http(gsmClient, host, port);
   http.setTimeout(20000);  // Tăng timeout lên 20s để ổn định hơn với mạng chậm
@@ -430,13 +430,13 @@ bool cellularHttpPost(const char* host, uint16_t port, const char* path, const S
       if (attempt < 3) {
         Serial.println("[CELL] Thử reconnect trước khi retry...");
         if (cellularBegin()) {
-          Serial.println("[CELL] ✅ Reconnect thành công, retry request...");
+          Serial.println("[CELL]  Reconnect thành công, retry request...");
           gsmClient.stop();  // Đảm bảo client sạch
           http = HttpClient(gsmClient, host, port);
           http.setTimeout(20000);
           esp_task_wdt_reset();
         } else {
-          Serial.println("[CELL] ⚠️ Reconnect thất bại, vẫn retry...");
+          Serial.println("[CELL]  Reconnect thất bại, vẫn retry...");
         }
       }
       continue;
@@ -462,7 +462,7 @@ bool cellularHttpPostWithOptions(const char* host, uint16_t port, const char* pa
   if (!ensureCellularConnection()) {
     Serial.println("[CELL] Đang reconnect...");
     if (!cellularBegin()) {
-      Serial.println("[CELL] ❌ Reconnect thất bại");
+      Serial.println("[CELL]  Reconnect thất bại");
       if (cellularHttpMutex) xSemaphoreGive(cellularHttpMutex);
       return false;
     }
@@ -523,13 +523,13 @@ bool cellularHttpPostWithOptions(const char* host, uint16_t port, const char* pa
       if (attempt < attempts) {
         Serial.println("[CELL] Thử reconnect trước khi retry...");
         if (cellularBegin()) {
-          Serial.println("[CELL] ✅ Reconnect thành công, retry request...");
+          Serial.println("[CELL]  Reconnect thành công, retry request...");
           gsmClient.stop();
           http = HttpClient(gsmClient, host, port);
           http.setTimeout(timeoutMs);
           esp_task_wdt_reset();
         } else {
-          Serial.println("[CELL] ⚠️ Reconnect thất bại, vẫn retry...");
+          Serial.println("[CELL]  Reconnect thất bại, vẫn retry...");
         }
       }
       continue;
@@ -583,7 +583,7 @@ bool cellularHttpGet(const char* host, uint16_t port, const char* path, String& 
   if (!ensureCellularConnection()) {
     Serial.println("[CELL] Đang reconnect...");
     if (!cellularBegin()) {
-      Serial.println("[CELL] ❌ Reconnect thất bại");
+      Serial.println("[CELL]  Reconnect thất bại");
       if (cellularHttpMutex) xSemaphoreGive(cellularHttpMutex);
       return false;
     }
@@ -597,7 +597,7 @@ bool cellularHttpGet(const char* host, uint16_t port, const char* path, String& 
   Serial.println(port);
   esp_task_wdt_reset();
   
-  // ✅ DNS đã cached trong cellularBegin() - không cần resolve lại
+  //  DNS đã cached trong cellularBegin() - không cần resolve lại
   // HTTP GET request với timeout
   HttpClient http(gsmClient, host, port);
   http.setTimeout(20000);  // Tăng timeout lên 20s
@@ -654,7 +654,7 @@ bool cellularHttpGet(const char* host, uint16_t port, const char* path, String& 
       if (attempt < 3) {
         Serial.println("[CELL] Thử reconnect trước khi retry...");
         if (cellularBegin()) {
-          Serial.println("[CELL] ✅ Reconnect thành công, retry request...");
+          Serial.println("[CELL]  Reconnect thành công, retry request...");
           gsmClient.stop();
           http = HttpClient(gsmClient, host, port);
           http.setTimeout(20000);
@@ -682,7 +682,7 @@ bool cellularOtaDownload(const char* host, uint16_t port, const char* path) {
   if (!ensureCellularConnection()) {
     Serial.println("[CELL][OTA] Đang reconnect...");
     if (!cellularBegin()) {
-      Serial.println("[CELL][OTA] ❌ Reconnect thất bại");
+      Serial.println("[CELL][OTA]  Reconnect thất bại");
       if (cellularHttpMutex) xSemaphoreGive(cellularHttpMutex);
       return false;
     }
@@ -784,7 +784,7 @@ bool cellularHttpPostAT(const char* host, uint16_t port, const char* path, const
   if (!isModemReady) {
     Serial.println("[CELL][AT] Modem chưa sẵn sàng, khởi tạo...");
     if (!cellularBegin()) {
-      Serial.println("[CELL][AT] ❌ Không thể khởi tạo modem");
+      Serial.println("[CELL][AT]  Không thể khởi tạo modem");
       return false;
     }
   }

@@ -112,12 +112,12 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔧 Battery Monitor Firmware Upload</h1>
+            <h1> Battery Monitor Firmware Upload</h1>
             <p>Upload firmware từ máy local lên backend server</p>
         </div>
 
         <div class="info">
-            <h3>📋 Hướng dẫn sử dụng:</h3>
+            <h3> Hướng dẫn sử dụng:</h3>
             <ol>
                 <li>Build firmware trên máy local với PlatformIO</li>
                 <li>Chọn file firmware .bin đã build</li>
@@ -129,36 +129,36 @@
 
         <form id="uploadForm">
             <div class="form-group">
-                <label for="firmwareFile">📁 Firmware File (.bin):</label>
+                <label for="firmwareFile"> Firmware File (.bin):</label>
                 <input type="file" id="firmwareFile" accept=".bin" required>
             </div>
 
             <div class="form-group">
-                <label for="version">📱 Version:</label>
+                <label for="version"> Version:</label>
                 <input type="text" id="version" placeholder="1.0.1" required>
             </div>
 
             <div class="form-group">
-                <label for="build">🔢 Build Number:</label>
+                <label for="build"> Build Number:</label>
                 <input type="number" id="build" value="1" min="1">
             </div>
 
             <div class="form-group">
-                <label for="serverUrl">🌐 Server URL:</label>
+                <label for="serverUrl"> Server URL:</label>
                 <input type="url" id="serverUrl" placeholder="http://cloud.anhnguyxn.io.vn:8000" required>
             </div>
 
             <div class="form-group">
-                <label for="apiKey">🔑 API Key:</label>
+                <label for="apiKey"> API Key:</label>
                 <input type="password" id="apiKey" placeholder="battery_monitor_2024_secure_key">
             </div>
 
             <div class="form-group">
-                <label for="releaseNotes">📝 Release Notes:</label>
+                <label for="releaseNotes"> Release Notes:</label>
                 <textarea id="releaseNotes" rows="3" placeholder="Bug fixes and improvements"></textarea>
             </div>
 
-            <button type="submit" id="uploadBtn">🚀 Upload Firmware</button>
+            <button type="submit" id="uploadBtn"> Upload Firmware</button>
         </form>
 
         <div class="progress" id="progress">
@@ -168,7 +168,7 @@
         <div class="status" id="status"></div>
 
         <div class="info">
-            <h3>🛠️ Alternative Methods:</h3>
+            <h3> Alternative Methods:</h3>
             
             <h4>1. Command Line (Bash):</h4>
             <div class="code">
@@ -216,7 +216,7 @@ curl -X POST http://cloud.anhnguyxn.io.vn:8000/api/firmware/upload \
             
             // Disable form
             document.getElementById('uploadBtn').disabled = true;
-            document.getElementById('uploadBtn').textContent = '🔄 Đang upload...';
+            document.getElementById('uploadBtn').textContent = ' Đang upload...';
             showProgress();
             
             try {
@@ -236,18 +236,18 @@ curl -X POST http://cloud.anhnguyxn.io.vn:8000/api/firmware/upload \
                 const result = await response.json();
                 
                 if (response.ok && result.status === 'success') {
-                    showStatus('✅ Upload thành công! ESP32 sẽ tự động phát hiện firmware mới.', 'success');
+                    showStatus(' Upload thành công! ESP32 sẽ tự động phát hiện firmware mới.', 'success');
                     simulateProgress();
                 } else {
-                    showStatus(`❌ Upload thất bại: ${result.message || 'Unknown error'}`, 'error');
+                    showStatus(` Upload thất bại: ${result.message || 'Unknown error'}`, 'error');
                 }
                 
             } catch (error) {
-                showStatus(`❌ Lỗi upload: ${error.message}`, 'error');
+                showStatus(` Lỗi upload: ${error.message}`, 'error');
             } finally {
                 // Re-enable form
                 document.getElementById('uploadBtn').disabled = false;
-                document.getElementById('uploadBtn').textContent = '🚀 Upload Firmware';
+                document.getElementById('uploadBtn').textContent = ' Upload Firmware';
             }
         });
         
